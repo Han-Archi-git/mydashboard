@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>mydashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="logo" data-link>mydashboard</a>
+    <nav class="crumbs" id="crumbs"></nav>
+    <div class="topbar-right">
+      <span id="sync-status" class="sync-status" title="동기화 상태">●</span>
+      <button id="settings-btn" class="icon-btn" aria-label="설정">설정</button>
+    </div>
+  </header>
+
+  <main id="app" class="app" aria-live="polite"></main>
+
+  <div id="modal-root"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
