@@ -401,7 +401,8 @@ a:hover { text-decoration: underline; }
   margin: 0;
   accent-color: var(--accent);
 }
-.sub-item .sub-text { flex: 1; word-break: break-word; }
+.sub-item .sub-text { flex: 1; word-break: break-word; cursor: text; }
+.sub-item .sub-text:hover { background: var(--surface-2); border-radius: 3px; }
 .sub-item.done .sub-text { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 .sub-item .row-btn { opacity: 0; padding: 0 4px; font-size: 13px; }
 .sub-item:hover .row-btn { opacity: 1; }

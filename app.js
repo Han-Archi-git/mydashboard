@@ -331,6 +331,20 @@ function deleteSubItem(tid, sid) {
   const i = t.subItems.findIndex(x => x.id === sid);
   if (i !== -1) { t.subItems.splice(i, 1); commit(); }
 }
+function updateSubItem(tid, sid, text) {
+  const t = findTask(tid); if (!t) return;
+  const s = (t.subItems || []).find(x => x.id === sid);
+  if (s) { s.text = text; commit(); }
+}
+function moveSubItem(tid, sid, dir) {
+  const t = findTask(tid); if (!t || !Array.isArray(t.subItems)) return;
+  const arr = t.subItems;
+  const i = arr.findIndex(x => x.id === sid);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  commit();
+}
 
 // ---------- Sticky notes ----------
 const NOTE_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
@@ -575,7 +589,9 @@ function renderTask(t, pid, phid) {
       ${t.subItems.map(s => `
         <li class="sub-item ${s.done ? 'done' : ''}" data-sub-id="${escapeHtml(s.id)}">
           <input type="checkbox" ${s.done ? 'checked' : ''} data-action="toggle-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}">
-          <span class="sub-text">${escapeHtml(s.text)}</span>
+          <span class="sub-text" data-action="edit-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="클릭해서 편집">${escapeHtml(s.text)}</span>
+          <button class="row-btn" data-action="move-sub-up"   data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="위로">▲</button>
+          <button class="row-btn" data-action="move-sub-down" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="아래로">▼</button>
           <button class="row-btn danger" data-action="delete-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="삭제">×</button>
         </li>`).join('')}
     </ul>` : '';
@@ -721,6 +737,17 @@ document.addEventListener('click', async e => {
     deleteSubItem(btn.dataset.taskId, btn.dataset.subId);
     return;
   }
+  if (a === 'edit-sub') {
+    e.preventDefault();
+    const t = findTask(btn.dataset.taskId); if (!t) return;
+    const s = (t.subItems || []).find(x => x.id === btn.dataset.subId);
+    if (!s) return;
+    const v = prompt('항목 내용', s.text);
+    if (v !== null && v.trim()) updateSubItem(btn.dataset.taskId, btn.dataset.subId, v.trim());
+    return;
+  }
+  if (a === 'move-sub-up')   { e.preventDefault(); moveSubItem(btn.dataset.taskId, btn.dataset.subId, -1); return; }
+  if (a === 'move-sub-down') { e.preventDefault(); moveSubItem(btn.dataset.taskId, btn.dataset.subId, +1); return; }
   if (a === 'toggle-subs') {
     e.preventDefault();
     const t = findTask(btn.dataset.taskId);
