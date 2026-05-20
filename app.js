@@ -130,8 +130,9 @@ function setSyncStatus(s) {
 // ---------- Data model ----------
 function freshData() {
   return {
-    version: 1,
+    version: 2,
     updatedAt: now(),
+    notes: [],
     categories: SEED_CATEGORIES.map(c => ({ ...c, projects: [] }))
   };
 }
@@ -139,6 +140,7 @@ function freshData() {
 function ensureSeed(d) {
   if (!d || typeof d !== 'object') return freshData();
   if (!Array.isArray(d.categories)) d.categories = [];
+  if (!Array.isArray(d.notes)) d.notes = [];
   // 비어 있을 때만 시드. 이후 사용자가 삭제한 분류는 다시 만들지 않음.
   if (d.categories.length === 0) {
     d.categories = SEED_CATEGORIES.map(c => ({ ...c, projects: [] }));
@@ -172,7 +174,13 @@ function findPhase(pid, phid) {
   return ph ? { ...f, phase: ph } : null;
 }
 
-const progressOfPhase    = ph => ph.tasks.length ? ph.tasks.filter(t => t.done).length / ph.tasks.length : 0;
+function progressOfTask(t) {
+  if (Array.isArray(t.subItems) && t.subItems.length > 0) {
+    return t.subItems.filter(s => s.done).length / t.subItems.length;
+  }
+  return t.done ? 1 : 0;
+}
+const progressOfPhase    = ph => ph.tasks.length ? ph.tasks.reduce((s, t) => s + progressOfTask(t), 0) / ph.tasks.length : 0;
 const progressOfProject  = p  => p.phases.length ? p.phases.reduce((s, ph) => s + progressOfPhase(ph), 0) / p.phases.length : 0;
 const progressOfCategory = c  => c.projects.length ? c.projects.reduce((s, p) => s + progressOfProject(p), 0) / c.projects.length : 0;
 
@@ -267,7 +275,16 @@ function toggleTask(tid) {
     for (const p of c.projects)
       for (const ph of p.phases) {
         const t = ph.tasks.find(t => t.id === tid);
-        if (t) { t.done = !t.done; t.doneAt = t.done ? now() : null; commit(); return; }
+        if (t) {
+          if (Array.isArray(t.subItems) && t.subItems.length > 0) {
+            const allDone = t.subItems.every(s => s.done);
+            t.subItems.forEach(s => { s.done = !allDone; });
+          } else {
+            t.done = !t.done;
+            t.doneAt = t.done ? now() : null;
+          }
+          commit(); return;
+        }
       }
 }
 function updateTask(tid, patch) {
@@ -285,6 +302,58 @@ function deleteTask(tid) {
         const i = ph.tasks.findIndex(t => t.id === tid);
         if (i !== -1) { ph.tasks.splice(i, 1); commit(); return; }
       }
+}
+
+// ---------- Sub-items (서류 체크리스트) ----------
+function findTask(tid) {
+  for (const c of state.data.categories)
+    for (const p of c.projects)
+      for (const ph of p.phases) {
+        const t = ph.tasks.find(t => t.id === tid);
+        if (t) return t;
+      }
+  return null;
+}
+function addSubItem(tid, text) {
+  const t = findTask(tid); if (!t) return;
+  if (!Array.isArray(t.subItems)) t.subItems = [];
+  t.subItems.push({ id: uid(), text, done: false });
+  commit();
+}
+function toggleSubItem(tid, sid) {
+  const t = findTask(tid); if (!t) return;
+  const s = (t.subItems || []).find(x => x.id === sid);
+  if (s) { s.done = !s.done; commit(); }
+}
+function deleteSubItem(tid, sid) {
+  const t = findTask(tid); if (!t) return;
+  if (!Array.isArray(t.subItems)) return;
+  const i = t.subItems.findIndex(x => x.id === sid);
+  if (i !== -1) { t.subItems.splice(i, 1); commit(); }
+}
+
+// ---------- Sticky notes ----------
+const NOTE_COLORS = ['#fef08a', '#bbf7d0', '#bae6fd', '#fbcfe8', '#fed7aa', '#e9d5ff'];
+function addNote(text) {
+  if (!Array.isArray(state.data.notes)) state.data.notes = [];
+  const color = NOTE_COLORS[state.data.notes.length % NOTE_COLORS.length];
+  state.data.notes.unshift({ id: uid(), text, color, createdAt: now() });
+  commit();
+}
+function updateNote(nid, text) {
+  const n = state.data.notes.find(n => n.id === nid);
+  if (n) { n.text = text; commit(); }
+}
+function deleteNote(nid) {
+  const i = state.data.notes.findIndex(n => n.id === nid);
+  if (i !== -1) { state.data.notes.splice(i, 1); commit(); }
+}
+function recolorNote(nid) {
+  const n = state.data.notes.find(n => n.id === nid);
+  if (!n) return;
+  const idx = NOTE_COLORS.indexOf(n.color);
+  n.color = NOTE_COLORS[(idx + 1) % NOTE_COLORS.length];
+  commit();
 }
 function moveTask(tid, dir) {
   for (const c of state.data.categories)
@@ -335,7 +404,28 @@ function renderCrumbs(r) {
   }
 }
 
+function renderNotesSection() {
+  const notes = (state.data.notes || []).map(n => `
+    <div class="note-card" style="background:${n.color}" data-note-id="${escapeHtml(n.id)}">
+      <div class="note-text" data-action="edit-note" data-note-id="${escapeHtml(n.id)}" title="클릭해서 편집">${escapeHtml(n.text)}</div>
+      <div class="note-actions">
+        <button class="note-btn" data-action="recolor-note" data-note-id="${escapeHtml(n.id)}" title="색상">●</button>
+        <button class="note-btn" data-action="delete-note" data-note-id="${escapeHtml(n.id)}" title="삭제">×</button>
+      </div>
+    </div>`).join('');
+  return `
+    <section class="notes-section">
+      <form class="add-row note-add" data-action="add-note">
+        <input class="add-input" name="text" placeholder="📝 오늘 할일·메모 (엔터로 추가)" autocomplete="off" required>
+        <button class="btn ghost" type="submit">메모</button>
+      </form>
+      <div class="notes-grid">${notes}</div>
+    </section>
+  `;
+}
+
 function renderHome() {
+  const notesSection = renderNotesSection();
   const sections = state.data.categories.map(c => {
     const projects = c.projects.map(p => {
       const pct = progressOfProject(p);
@@ -383,6 +473,7 @@ function renderHome() {
 
   return `
     <div class="section-head"><h1>대시보드</h1></div>
+    ${notesSection}
     ${sections}
     <section class="home-cat add-cat-section">
       <form class="add-row" data-action="add-category">
@@ -475,20 +566,46 @@ function renderProject(pid) {
 function renderTask(t, pid, phid) {
   const due = t.due ? renderDue(t.due) : '';
   const memo = t.memo ? `<div class="task-memo">${escapeHtml(t.memo)}</div>` : '';
+  const hasSubs = Array.isArray(t.subItems) && t.subItems.length > 0;
+  const subsDone = hasSubs ? t.subItems.filter(s => s.done).length : 0;
+  const taskPct = progressOfTask(t);
+  const taskDone = taskPct >= 1;
+  const subsHtml = hasSubs ? `
+    <ul class="sub-list">
+      ${t.subItems.map(s => `
+        <li class="sub-item ${s.done ? 'done' : ''}" data-sub-id="${escapeHtml(s.id)}">
+          <input type="checkbox" ${s.done ? 'checked' : ''} data-action="toggle-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}">
+          <span class="sub-text">${escapeHtml(s.text)}</span>
+          <button class="row-btn danger" data-action="delete-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="삭제">×</button>
+        </li>`).join('')}
+    </ul>` : '';
+  const addSubForm = `
+    <form class="add-row sub-add" data-action="add-sub" data-task-id="${escapeHtml(t.id)}">
+      <input class="add-input" name="text" placeholder="+ 서류·세부항목 추가 (엔터)" autocomplete="off" required>
+      <button class="btn ghost" type="submit">+</button>
+    </form>`;
+
   return `
-    <li class="task ${t.done ? 'done' : ''}" data-task-id="${escapeHtml(t.id)}">
-      <input type="checkbox" ${t.done ? 'checked' : ''} data-action="toggle-task" data-task-id="${escapeHtml(t.id)}">
-      <div class="task-body">
-        <div class="task-title">${escapeHtml(t.title)}</div>
-        ${memo}
-        ${due}
+    <li class="task ${taskDone ? 'done' : ''} ${hasSubs ? 'has-subs' : ''}" data-task-id="${escapeHtml(t.id)}">
+      <div class="task-main">
+        <input type="checkbox" ${taskDone ? 'checked' : ''} data-action="toggle-task" data-task-id="${escapeHtml(t.id)}" ${hasSubs ? 'title="하위 항목 모두 체크/해제"' : ''}>
+        <div class="task-body">
+          <div class="task-title">
+            ${escapeHtml(t.title)}
+            ${hasSubs ? `<span class="sub-count">${subsDone}/${t.subItems.length}</span>` : ''}
+          </div>
+          ${memo}
+          ${due}
+        </div>
+        <div class="task-actions">
+          <button class="row-btn" data-action="toggle-subs"     data-task-id="${escapeHtml(t.id)}" title="체크리스트">${hasSubs ? '▾' : '+'}</button>
+          <button class="row-btn" data-action="move-task-up"   data-task-id="${escapeHtml(t.id)}" title="위로">▲</button>
+          <button class="row-btn" data-action="move-task-down" data-task-id="${escapeHtml(t.id)}" title="아래로">▼</button>
+          <button class="row-btn" data-action="edit-task"      data-task-id="${escapeHtml(t.id)}" title="편집">편집</button>
+          <button class="row-btn danger" data-action="delete-task" data-task-id="${escapeHtml(t.id)}" title="삭제">삭제</button>
+        </div>
       </div>
-      <div class="task-actions">
-        <button class="row-btn" data-action="move-task-up"   data-task-id="${escapeHtml(t.id)}" title="위로">▲</button>
-        <button class="row-btn" data-action="move-task-down" data-task-id="${escapeHtml(t.id)}" title="아래로">▼</button>
-        <button class="row-btn" data-action="edit-task"      data-task-id="${escapeHtml(t.id)}" title="편집">편집</button>
-        <button class="row-btn danger" data-action="delete-task" data-task-id="${escapeHtml(t.id)}" title="삭제">삭제</button>
-      </div>
+      ${hasSubs || t._showAdd ? `<div class="task-subs">${subsHtml}${addSubForm}</div>` : ''}
     </li>`;
 }
 
@@ -592,6 +709,45 @@ document.addEventListener('click', async e => {
   if (a === 'toggle-task') {
     e.preventDefault();
     toggleTask(btn.dataset.taskId);
+    return;
+  }
+  if (a === 'toggle-sub') {
+    e.preventDefault();
+    toggleSubItem(btn.dataset.taskId, btn.dataset.subId);
+    return;
+  }
+  if (a === 'delete-sub') {
+    e.preventDefault();
+    deleteSubItem(btn.dataset.taskId, btn.dataset.subId);
+    return;
+  }
+  if (a === 'toggle-subs') {
+    e.preventDefault();
+    const t = findTask(btn.dataset.taskId);
+    if (!t) return;
+    const has = Array.isArray(t.subItems) && t.subItems.length > 0;
+    if (!has) {
+      const v = prompt('첫 서류·세부항목 이름');
+      if (v && v.trim()) addSubItem(btn.dataset.taskId, v.trim());
+    }
+    return;
+  }
+  if (a === 'edit-note') {
+    e.preventDefault();
+    const n = state.data.notes.find(n => n.id === btn.dataset.noteId);
+    if (!n) return;
+    const v = prompt('메모 수정', n.text);
+    if (v !== null) updateNote(btn.dataset.noteId, v.trim());
+    return;
+  }
+  if (a === 'delete-note') {
+    e.preventDefault();
+    deleteNote(btn.dataset.noteId);
+    return;
+  }
+  if (a === 'recolor-note') {
+    e.preventDefault();
+    recolorNote(btn.dataset.noteId);
     return;
   }
   if (a === 'move-cat-up')   { e.preventDefault(); moveCategory(btn.dataset.catId, -1); return; }
@@ -725,6 +881,14 @@ document.addEventListener('submit', async e => {
   }
   if (a === 'add-task') {
     if (data.title?.trim()) { addTask(form.dataset.projectId, form.dataset.phaseId, data.title.trim()); form.reset(); }
+    return;
+  }
+  if (a === 'add-sub') {
+    if (data.text?.trim()) { addSubItem(form.dataset.taskId, data.text.trim()); form.reset(); }
+    return;
+  }
+  if (a === 'add-note') {
+    if (data.text?.trim()) { addNote(data.text.trim()); form.reset(); }
     return;
   }
 });
