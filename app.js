@@ -16,6 +16,16 @@ const SEED_CATEGORIES = [
   { id: 'slk',                  name: '(주)SLK종합건축사사무소',    color: '#ef4444' },
 ];
 
+const COLOR_PALETTE = [
+  '#6366f1', '#10b981', '#f59e0b', '#ef4444',
+  '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16',
+  '#f97316', '#14b8a6', '#3b82f6', '#a855f7',
+];
+function pickNextColor() {
+  const used = new Set(state.data.categories.map(c => c.color));
+  return COLOR_PALETTE.find(c => !used.has(c)) || COLOR_PALETTE[state.data.categories.length % COLOR_PALETTE.length];
+}
+
 const state = {
   data: null,
   syncStatus: 'idle',
@@ -129,14 +139,10 @@ function freshData() {
 function ensureSeed(d) {
   if (!d || typeof d !== 'object') return freshData();
   if (!Array.isArray(d.categories)) d.categories = [];
-  for (const seed of SEED_CATEGORIES) {
-    if (!d.categories.find(c => c.id === seed.id)) {
-      d.categories.push({ ...seed, projects: [] });
-    }
+  // 비어 있을 때만 시드. 이후 사용자가 삭제한 분류는 다시 만들지 않음.
+  if (d.categories.length === 0) {
+    d.categories = SEED_CATEGORIES.map(c => ({ ...c, projects: [] }));
   }
-  // sort categories in seed order, extras at the end
-  const order = new Map(SEED_CATEGORIES.map((c, i) => [c.id, i]));
-  d.categories.sort((a, b) => (order.get(a.id) ?? 99) - (order.get(b.id) ?? 99));
   for (const c of d.categories) {
     c.projects = Array.isArray(c.projects) ? c.projects : [];
     for (const p of c.projects) {
@@ -186,6 +192,32 @@ function commit() {
 }
 
 // ---------- Mutations ----------
+function addCategory(name) {
+  const id = 'cat_' + uid();
+  state.data.categories.push({ id, name, color: pickNextColor(), projects: [] });
+  commit();
+}
+function renameCategory(cid, name) {
+  const c = findCategory(cid); if (!c) return;
+  c.name = name; commit();
+}
+function deleteCategory(cid) {
+  const i = state.data.categories.findIndex(c => c.id === cid);
+  if (i !== -1) { state.data.categories.splice(i, 1); commit(); }
+}
+function moveCategory(cid, dir) {
+  const arr = state.data.categories;
+  const i = arr.findIndex(c => c.id === cid);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  commit();
+}
+function recolorCategory(cid, color) {
+  const c = findCategory(cid); if (!c) return;
+  c.color = color; commit();
+}
+
 function addProject(catId, name) {
   const c = findCategory(catId);
   if (!c) return;
@@ -304,23 +336,60 @@ function renderCrumbs(r) {
 }
 
 function renderHome() {
-  const cards = state.data.categories.map(c => {
-    const pct = progressOfCategory(c);
-    const projectCount = c.projects.length;
-    const totalTasks = c.projects.reduce((s, p) => s + p.phases.reduce((ss, ph) => ss + ph.tasks.length, 0), 0);
-    const doneTasks  = c.projects.reduce((s, p) => s + p.phases.reduce((ss, ph) => ss + ph.tasks.filter(t => t.done).length, 0), 0);
+  const sections = state.data.categories.map(c => {
+    const projects = c.projects.map(p => {
+      const pct = progressOfProject(p);
+      const totalTasks = p.phases.reduce((s, ph) => s + ph.tasks.length, 0);
+      const doneTasks  = p.phases.reduce((s, ph) => s + ph.tasks.filter(t => t.done).length, 0);
+      const activeIdx  = activePhaseIdx(p);
+      const activeName = activeIdx >= 0 ? p.phases[activeIdx].name : (p.phases.length ? '완료' : '');
+      return `
+        <a href="#/p/${encodeURIComponent(p.id)}" class="project-row">
+          <div class="project-row-main">
+            <span class="project-row-name">${escapeHtml(p.name)}</span>
+            ${activeName ? `<span class="project-row-phase">${escapeHtml(activeName)}</span>` : ''}
+          </div>
+          <div class="project-row-bar"><span class="progress-fill" style="width:${pct * 100}%;background:${c.color}"></span></div>
+          <div class="project-row-stat">
+            <span class="pct">${fmtPct(pct)}</span>
+            <span class="count">${doneTasks}/${totalTasks}</span>
+          </div>
+        </a>`;
+    }).join('') || `<div class="empty-mini">아직 프로젝트가 없습니다</div>`;
+
     return `
-      <a href="#/c/${encodeURIComponent(c.id)}" class="cat-card">
-        <div class="cat-name"><span class="cat-dot" style="background:${c.color}"></span>${escapeHtml(c.name)}</div>
-        <div class="cat-meta">프로젝트 ${projectCount}개 · 할일 ${doneTasks}/${totalTasks}</div>
-        <div class="progress"><div class="progress-fill" style="width:${pct * 100}%;background:${c.color}"></div></div>
-        <div class="progress-pct">${fmtPct(pct)}</div>
-      </a>`;
+      <section class="home-cat">
+        <header class="home-cat-head">
+          <a href="#/c/${encodeURIComponent(c.id)}" class="home-cat-title">
+            <span class="cat-dot" style="background:${c.color}"></span>
+            ${escapeHtml(c.name)}
+          </a>
+          <span class="home-cat-meta">${c.projects.length}개 · ${fmtPct(progressOfCategory(c))}</span>
+          <span class="home-cat-actions">
+            <button class="row-btn" data-action="move-cat-up"   data-cat-id="${escapeHtml(c.id)}" title="위로">▲</button>
+            <button class="row-btn" data-action="move-cat-down" data-cat-id="${escapeHtml(c.id)}" title="아래로">▼</button>
+            <button class="row-btn" data-action="recolor-cat"   data-cat-id="${escapeHtml(c.id)}" title="색상">색</button>
+            <button class="row-btn" data-action="rename-cat"    data-cat-id="${escapeHtml(c.id)}" title="이름변경">이름</button>
+            <button class="row-btn danger" data-action="delete-cat" data-cat-id="${escapeHtml(c.id)}" title="삭제">삭제</button>
+          </span>
+        </header>
+        <div class="project-list">${projects}</div>
+        <form class="add-row mini" data-action="add-project" data-cat-id="${escapeHtml(c.id)}">
+          <input class="add-input" name="name" placeholder="+ 새 프로젝트 (엔터)" autocomplete="off" required>
+          <button class="btn ghost" type="submit">추가</button>
+        </form>
+      </section>`;
   }).join('');
+
   return `
     <div class="section-head"><h1>대시보드</h1></div>
-    <p class="section-sub">대분류 · 프로젝트 · 단계 · 할일을 한눈에</p>
-    <div class="home-grid">${cards}</div>
+    ${sections}
+    <section class="home-cat add-cat-section">
+      <form class="add-row" data-action="add-category">
+        <input class="add-input" name="name" placeholder="+ 새 대분류 (예: 세무, 외주, 학습 등)" autocomplete="off" required>
+        <button class="btn" type="submit">대분류 추가</button>
+      </form>
+    </section>
   `;
 }
 
@@ -525,6 +594,32 @@ document.addEventListener('click', async e => {
     toggleTask(btn.dataset.taskId);
     return;
   }
+  if (a === 'move-cat-up')   { e.preventDefault(); moveCategory(btn.dataset.catId, -1); return; }
+  if (a === 'move-cat-down') { e.preventDefault(); moveCategory(btn.dataset.catId, +1); return; }
+  if (a === 'rename-cat') {
+    e.preventDefault();
+    const c = findCategory(btn.dataset.catId); if (!c) return;
+    const v = prompt('대분류 이름', c.name);
+    if (v && v.trim()) renameCategory(btn.dataset.catId, v.trim());
+    return;
+  }
+  if (a === 'recolor-cat') {
+    e.preventDefault();
+    const c = findCategory(btn.dataset.catId); if (!c) return;
+    const idx = COLOR_PALETTE.indexOf(c.color);
+    const next = COLOR_PALETTE[(idx + 1) % COLOR_PALETTE.length];
+    recolorCategory(btn.dataset.catId, next);
+    return;
+  }
+  if (a === 'delete-cat') {
+    e.preventDefault();
+    const c = findCategory(btn.dataset.catId); if (!c) return;
+    const msg = c.projects.length
+      ? `"${c.name}"과 안의 프로젝트 ${c.projects.length}개를 모두 삭제할까요?`
+      : `"${c.name}"을 삭제할까요?`;
+    if (confirm(msg)) deleteCategory(btn.dataset.catId);
+    return;
+  }
   if (a === 'move-phase-up')   { e.preventDefault(); movePhase(btn.dataset.projectId, btn.dataset.phaseId, -1); return; }
   if (a === 'move-phase-down') { e.preventDefault(); movePhase(btn.dataset.projectId, btn.dataset.phaseId, +1); return; }
   if (a === 'move-task-up')    { e.preventDefault(); moveTask(btn.dataset.taskId, -1); return; }
@@ -616,6 +711,10 @@ document.addEventListener('submit', async e => {
   }
 
   const a = form.dataset.action;
+  if (a === 'add-category') {
+    if (data.name?.trim()) { addCategory(data.name.trim()); form.reset(); }
+    return;
+  }
   if (a === 'add-project') {
     if (data.name?.trim()) { addProject(form.dataset.catId, data.name.trim()); form.reset(); }
     return;
