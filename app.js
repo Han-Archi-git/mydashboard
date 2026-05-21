@@ -32,7 +32,7 @@ const state = {
   pushPending: false,
   online: navigator.onLine,
   // Transient UI state (re-render 사이에만 유지, Gist 저장 X)
-  ui: { phaseOpen: {} },  // phaseId -> true/false (사용자가 명시적으로 토글한 것만 기록)
+  ui: { phaseOpen: {}, phasePrevDone: {} },  // phaseOpen: 사용자 명시 토글, phasePrevDone: 완료 전이 감지용
 };
 
 // ---------- Utility ----------
@@ -705,9 +705,15 @@ function renderProject(pid) {
     const phPct = progressOfPhase(ph);
     const isActive = idx === activeIdx;
     const isDone = phPct >= 1 && ph.tasks.length > 0;
-    const defaultOpen = isActive || ph.tasks.length === 0 || idx === 0;
+    // Phase open 규칙:
+    // - 완료된 phase: 기본 닫힘 (사용자가 다시 열면 유지)
+    // - 미완료 phase: 기본 열림 (사용자가 닫으면 유지)
+    // - 미완료→완료 전이 시점에만 명시적 토글 리셋해서 자동 닫힘 적용
+    const prevDone = !!state.ui.phasePrevDone[ph.id];
+    if (!prevDone && isDone) delete state.ui.phaseOpen[ph.id];
+    state.ui.phasePrevDone[ph.id] = isDone;
     const explicit = state.ui.phaseOpen[ph.id];
-    const isOpen = explicit === undefined ? defaultOpen : explicit;
+    const isOpen = explicit !== undefined ? explicit : !isDone;
     const tasks = ph.tasks.map(t => renderTask(t, p.id, ph.id)).join('');
     return `
       <section class="phase ${isActive ? 'active' : ''} ${isOpen ? 'open' : ''}" data-phase-id="${escapeHtml(ph.id)}">
