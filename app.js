@@ -184,6 +184,174 @@ const progressOfPhase    = ph => ph.tasks.length ? ph.tasks.reduce((s, t) => s +
 const progressOfProject  = p  => p.phases.length ? p.phases.reduce((s, ph) => s + progressOfPhase(ph), 0) / p.phases.length : 0;
 const progressOfCategory = c  => c.projects.length ? c.projects.reduce((s, p) => s + progressOfProject(p), 0) / c.projects.length : 0;
 
+// ---------- Overview stats helpers ----------
+function forEachTask(cb) {
+  for (const c of state.data.categories)
+    for (const p of c.projects)
+      for (const ph of p.phases)
+        for (const t of ph.tasks)
+          cb(t, ph, p, c);
+}
+function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function tasksCompletedSince(ts) {
+  let n = 0;
+  forEachTask(t => { if (t.doneAt && new Date(t.doneAt).getTime() >= ts) n++; });
+  return n;
+}
+function statsCompletedToday() { return tasksCompletedSince(startOfDay(new Date()).getTime()); }
+function statsCompletedWeek()  {
+  const d = startOfDay(new Date()); d.setDate(d.getDate() - 6);
+  return tasksCompletedSince(d.getTime());
+}
+function statsTop5Projects() {
+  const arr = [];
+  for (const c of state.data.categories) {
+    for (const p of c.projects) {
+      const pct = progressOfProject(p);
+      if (pct < 1 && p.phases.some(ph => ph.tasks.length)) {
+        arr.push({ name: p.name, pct, catColor: c.color });
+      }
+    }
+  }
+  return arr.sort((a, b) => b.pct - a.pct).slice(0, 5);
+}
+function statsLast7Days() {
+  const today = startOfDay(new Date());
+  const arr = [];
+  for (let i = 6; i >= 0; i--) {
+    const dayStart = new Date(today); dayStart.setDate(today.getDate() - i);
+    const dayEnd   = new Date(dayStart); dayEnd.setDate(dayStart.getDate() + 1);
+    let n = 0;
+    forEachTask(t => {
+      if (!t.doneAt) return;
+      const tt = new Date(t.doneAt).getTime();
+      if (tt >= dayStart.getTime() && tt < dayEnd.getTime()) n++;
+    });
+    arr.push({ date: dayStart, count: n, isToday: i === 0 });
+  }
+  return arr;
+}
+function statsDueSoon() {
+  // 마감일 있고 미완료, 오늘 기준 +7일 이내 또는 이미 지난 것
+  const now = Date.now();
+  const limit = now + 7 * 24 * 60 * 60 * 1000;
+  const out = [];
+  forEachTask((t, ph, p, c) => {
+    if (!t.due || t.done) return;
+    const dueT = new Date(t.due).getTime();
+    if (dueT > limit) return;
+    out.push({ task: t, phase: ph, project: p, category: c, dueT });
+  });
+  return out.sort((a, b) => a.dueT - b.dueT).slice(0, 10);
+}
+
+// ---------- SVG donut helper ----------
+function renderDonut(pct, color, size = 92) {
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const cx = size / 2;
+  const cy = size / 2;
+  const c = 2 * Math.PI * r;
+  const dash = Math.max(0, Math.min(1, pct)) * c;
+  return `
+    <svg viewBox="0 0 ${size} ${size}" role="img" aria-label="${Math.round(pct * 100)}%">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(56,189,248,0.10)" stroke-width="${stroke}"/>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}"
+              stroke-dasharray="${dash} ${c}" stroke-linecap="round"
+              transform="rotate(-90 ${cx} ${cy})"
+              style="filter:drop-shadow(0 0 4px ${color})"/>
+    </svg>`;
+}
+
+function renderOverview() {
+  const today = statsCompletedToday();
+  const week  = statsCompletedWeek();
+  const top5  = statsTop5Projects();
+  const last7 = statsLast7Days();
+  const due   = statsDueSoon();
+  const cats  = state.data.categories;
+
+  // top5
+  const topHtml = top5.length ? top5.map(p => `
+    <div class="top-project-row">
+      <span class="tp-name">${escapeHtml(p.name)}</span>
+      <span class="tp-bar"><span style="width:${p.pct * 100}%"></span></span>
+      <span class="tp-pct">${fmtPct(p.pct)}</span>
+    </div>
+  `).join('') : `<div class="empty-mini">진행 중인 프로젝트 없음</div>`;
+
+  // donuts (per-category)
+  const donutsHtml = cats.length ? cats.map(c => {
+    const pct = progressOfCategory(c);
+    return `
+      <div class="donut-cell">
+        <div class="dn-wrap">
+          ${renderDonut(pct, c.color, 92)}
+          <span class="dn-pct">${Math.round(pct * 100)}%</span>
+        </div>
+        <span class="dn-label">${escapeHtml(c.name)}</span>
+      </div>`;
+  }).join('') : '';
+
+  // bar chart
+  const maxBar = Math.max(1, ...last7.map(d => d.count));
+  const barsHtml = last7.map(d => {
+    const h = d.count === 0 ? 2 : Math.max(4, (d.count / maxBar) * 100);
+    const label = d.date.toLocaleDateString('ko-KR', { weekday: 'short' });
+    return `
+      <div class="bar-col${d.isToday ? ' today' : ''}">
+        <span class="bar-val">${d.count}</span>
+        <span class="bar-bg" style="height:${h}%"></span>
+        <span class="bar-day">${label}</span>
+      </div>`;
+  }).join('');
+
+  // due-soon list
+  const dueHtml = due.length ? due.map(d => {
+    const dueDate = new Date(d.dueT);
+    const diff = Math.floor((d.dueT - Date.now()) / (1000 * 60 * 60 * 24));
+    const isLate = diff < 0;
+    const pill = isLate ? `${-diff}일 지남` : diff === 0 ? '오늘' : `D-${diff}`;
+    return `
+      <a href="#/p/${encodeURIComponent(d.project.id)}" class="duesoon-item${isLate ? ' late' : ''}">
+        <span class="ds-pill">${pill}</span>
+        <span class="ds-title">${escapeHtml(d.task.title)}</span>
+        <span class="ds-meta">${escapeHtml(d.project.name)}</span>
+      </a>`;
+  }).join('') : `<div class="duesoon-empty">마감 임박 task 없음 ✓</div>`;
+
+  return `
+    <section class="overview">
+      <div class="ov-card ov-today">
+        <h3>오늘 완료</h3>
+        <div class="stat-num">${today}</div>
+        <div class="stat-sub">건 (today)</div>
+      </div>
+      <div class="ov-card ov-week">
+        <h3>최근 7일</h3>
+        <div class="stat-num">${week}</div>
+        <div class="stat-sub">건 (last 7d)</div>
+      </div>
+      <div class="ov-card ov-top">
+        <h3>진척도 TOP 5</h3>
+        <div class="top-projects">${topHtml}</div>
+      </div>
+      <div class="ov-card ov-donuts">
+        <h3>분류별 진척도</h3>
+        <div class="donut-grid">${donutsHtml}</div>
+      </div>
+      <div class="ov-card ov-bar">
+        <h3>일별 완료 추이</h3>
+        <div class="bar-chart">${barsHtml}</div>
+      </div>
+      <div class="ov-card ov-duesoon">
+        <h3>마감 임박 (7일 이내)</h3>
+        <div class="duesoon-list">${dueHtml}</div>
+      </div>
+    </section>
+  `;
+}
+
 function activePhaseIdx(project) {
   // 첫 미완료 단계 인덱스. 모두 완료면 -1.
   for (let i = 0; i < project.phases.length; i++) {
@@ -485,7 +653,10 @@ function renderHome() {
       </section>`;
   }).join('');
 
+  const overview = renderOverview();
+
   return `
+    ${overview}
     <div class="section-head"><h1>대시보드</h1></div>
     ${notesSection}
     ${sections}
@@ -948,9 +1119,30 @@ window.addEventListener('online',  () => { state.online = true;  setSyncStatus(s
 window.addEventListener('offline', () => { state.online = false; setSyncStatus(state.syncStatus); });
 window.addEventListener('hashchange', render);
 
+// ---------- Live clock ----------
+function startLiveClock() {
+  const dateEl = document.getElementById('lc-date');
+  const timeEl = document.getElementById('lc-time');
+  if (!dateEl || !timeEl) return;
+  const tick = () => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    dateEl.textContent = `${yyyy}-${mm}-${dd}`;
+    timeEl.textContent = `${hh}:${mi}:${ss}`;
+  };
+  tick();
+  setInterval(tick, 1000);
+}
+
 // ---------- Init ----------
 async function init() {
   state.data = ensureSeed(loadLocal());
+  startLiveClock();
   render();
 
   if (!loadPat() || !loadGistId()) {

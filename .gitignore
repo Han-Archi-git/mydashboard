@@ -5,3 +5,7 @@ desktop.ini
 .vscode/
 .idea/
 node_modules/
+
+# Local Claude Code config and worklog (machine-specific, not portable)
+.claude/
+.claude-worklog.md
