@@ -31,6 +31,8 @@ const state = {
   syncStatus: 'idle',
   pushPending: false,
   online: navigator.onLine,
+  // Transient UI state (re-render 사이에만 유지, Gist 저장 X)
+  ui: { phaseOpen: {} },  // phaseId -> true/false (사용자가 명시적으로 토글한 것만 기록)
 };
 
 // ---------- Utility ----------
@@ -703,7 +705,9 @@ function renderProject(pid) {
     const phPct = progressOfPhase(ph);
     const isActive = idx === activeIdx;
     const isDone = phPct >= 1 && ph.tasks.length > 0;
-    const isOpen = isActive || ph.tasks.length === 0 || idx === 0;
+    const defaultOpen = isActive || ph.tasks.length === 0 || idx === 0;
+    const explicit = state.ui.phaseOpen[ph.id];
+    const isOpen = explicit === undefined ? defaultOpen : explicit;
     const tasks = ph.tasks.map(t => renderTask(t, p.id, ph.id)).join('');
     return `
       <section class="phase ${isActive ? 'active' : ''} ${isOpen ? 'open' : ''}" data-phase-id="${escapeHtml(ph.id)}">
@@ -890,7 +894,11 @@ document.addEventListener('click', async e => {
 
   if (a === 'toggle-phase') {
     const sec = btn.closest('.phase');
-    if (sec) sec.classList.toggle('open');
+    if (sec) {
+      const willBeOpen = !sec.classList.contains('open');
+      sec.classList.toggle('open');
+      state.ui.phaseOpen[sec.dataset.phaseId] = willBeOpen;
+    }
     return;
   }
   if (a === 'toggle-task') {
