@@ -84,6 +84,29 @@ async function fetchGist() {
   try { return JSON.parse(file.content); } catch { return null; }
 }
 
+async function fetchGistRevisions() {
+  const pat = loadPat(), gistId = loadGistId();
+  if (!pat || !gistId) return null;
+  const res = await fetch(`https://api.github.com/gists/${gistId}/commits`, {
+    headers: { Authorization: `token ${pat}`, Accept: 'application/vnd.github+json' }
+  });
+  if (!res.ok) throw new Error(`리비전 목록 읽기 실패 (${res.status})`);
+  return await res.json();
+}
+
+async function fetchGistAtVersion(version) {
+  const pat = loadPat(), gistId = loadGistId();
+  if (!pat || !gistId) return null;
+  const res = await fetch(`https://api.github.com/gists/${gistId}/${version}`, {
+    headers: { Authorization: `token ${pat}`, Accept: 'application/vnd.github+json' }
+  });
+  if (!res.ok) throw new Error(`리비전 읽기 실패 (${res.status})`);
+  const json = await res.json();
+  const file = json.files[DATA_FILENAME] || Object.values(json.files)[0];
+  if (!file || !file.content) return null;
+  try { return JSON.parse(file.content); } catch { return null; }
+}
+
 async function pushGist(data) {
   const pat = loadPat(), gistId = loadGistId();
   if (!pat || !gistId) return;
@@ -884,10 +907,40 @@ function showSettingsModal() {
     <input value="${loadPat() ? '••••••••' + (loadPat().slice(-4)) : ''}" readonly>
     <div class="modal-actions">
       <button type="button" class="btn ghost" data-action="modal-close">닫기</button>
+      <button type="button" class="btn ghost" data-action="restore-revision">이전 버전 복구</button>
       <button type="button" class="btn ghost" data-action="reconnect">재연결</button>
       <button type="button" class="btn danger" data-action="signout">연결 해제</button>
     </div>
   `);
+}
+
+async function showRestoreModal() {
+  showModal(`<h2>이전 버전 복구</h2><p>리비전 목록 불러오는 중...</p>`);
+  try {
+    const commits = await fetchGistRevisions();
+    if (!commits || commits.length === 0) {
+      showModal(`<h2>이전 버전 복구</h2><p>저장된 이전 버전이 없습니다.</p><div class="modal-actions"><button type="button" class="btn ghost" data-action="modal-close">닫기</button></div>`);
+      return;
+    }
+    const rows = commits.slice(0, 15).map((c, i) => {
+      const d = new Date(c.committed_at);
+      const label = d.toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const added = c.change_status?.additions ?? '';
+      const deleted = c.change_status?.deletions ?? '';
+      const badge = (added || deleted) ? ` <small style="opacity:.5">+${added}/-${deleted}</small>` : '';
+      return `<button class="btn ghost" style="width:100%;text-align:left;margin-bottom:4px" data-action="restore-version" data-version="${escapeHtml(c.version)}">${i === 0 ? '[현재] ' : ''}${label}${badge}</button>`;
+    }).join('');
+    showModal(`
+      <h2>이전 버전 복구</h2>
+      <p style="color:#f87171">복구하면 현재 데이터가 선택한 시점으로 교체됩니다.</p>
+      <div style="max-height:320px;overflow-y:auto">${rows}</div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-action="modal-close">취소</button>
+      </div>
+    `);
+  } catch (e) {
+    showModal(`<h2>오류</h2><p>${escapeHtml(e.message)}</p><div class="modal-actions"><button type="button" class="btn ghost" data-action="modal-close">닫기</button></div>`);
+  }
 }
 
 // ---------- Event handling ----------
@@ -1030,6 +1083,23 @@ document.addEventListener('click', async e => {
   }
   if (a === 'modal-close') { closeModal(); return; }
   if (a === 'reconnect')   { closeModal(); showAuthModal(); return; }
+  if (a === 'restore-revision') { showRestoreModal(); return; }
+  if (a === 'restore-version') {
+    const version = btn.dataset.version;
+    if (!version) return;
+    if (!confirm('이 시점으로 복구할까요? 현재 데이터가 교체됩니다.')) return;
+    closeModal();
+    toast('복구 중...', 3000);
+    fetchGistAtVersion(version).then(data => {
+      if (!data) { toast('해당 버전 데이터를 읽을 수 없습니다.', 3000); return; }
+      state.data = ensureSeed(data);
+      saveLocal(state.data);
+      pushGist(state.data);
+      render();
+      toast('복구 완료');
+    }).catch(e => toast(`복구 실패: ${e.message}`, 3000));
+    return;
+  }
   if (a === 'signout') {
     if (confirm('연결을 해제할까요? 로컬에 저장된 데이터는 유지됩니다.')) {
       clearAuth(); closeModal(); showAuthModal();
@@ -1173,8 +1243,14 @@ async function init() {
       saveLocal(state.data);
       render();
     } else if (remote === null) {
-      // empty gist — push our seed
-      await pushGist(state.data);
+      // Gist 파일이 비어있거나 없음 — 로컬에 실제 데이터가 없을 때만 시드 push
+      const hasData = state.data.categories.some(c => c.projects.length > 0)
+        || (Array.isArray(state.data.notes) && state.data.notes.length > 0);
+      if (!hasData) {
+        await pushGist(state.data);
+      } else {
+        toast('Gist가 비어있어 로컬 데이터를 유지합니다. 설정을 확인하세요.', 4000);
+      }
     }
     setSyncStatus('idle');
   } catch (e) {
