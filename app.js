@@ -178,22 +178,16 @@ function ensureSeed(d) {
   if (!Array.isArray(d.notes)) d.notes = [];
   if (!d.version) d.version = 1;
 
-  // v1 → v2: 카테고리 이름 영문화, Dev Lab 추가, 순서 재정렬
-  if (d.version < 2) {
-    for (const c of d.categories) {
-      if (CATEGORY_NAME_V2[c.id]) c.name = CATEGORY_NAME_V2[c.id];
+  // 구 한글 이름 → 영문 자동 변환 (version 무관)
+  for (const c of d.categories) {
+    if (CATEGORY_NAME_V2[c.id] && c.name !== CATEGORY_NAME_V2[c.id]) {
+      c.name = CATEGORY_NAME_V2[c.id];
     }
-    if (!d.categories.find(c => c.id === 'devlab')) {
-      d.categories.push({ id: 'devlab', name: 'Dev Lab', color: '#8b5cf6', projects: [] });
-    }
-    d.categories.sort((a, b) => {
-      const ai = CATEGORY_ORDER_V2.indexOf(a.id);
-      const bi = CATEGORY_ORDER_V2.indexOf(b.id);
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
-      return ai - bi;
-    });
-    d.version = 2;
+  }
+  // Dev Lab 없으면 personal 바로 다음에 추가
+  if (!d.categories.find(c => c.id === 'devlab')) {
+    const pi = d.categories.findIndex(c => c.id === 'personal');
+    d.categories.splice(pi + 1, 0, { id: 'devlab', name: 'Dev Lab', color: '#8b5cf6', projects: [] });
   }
 
   // 비어 있을 때만 시드. 이후 사용자가 삭제한 분류는 다시 만들지 않음.
