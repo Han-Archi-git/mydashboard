@@ -17,6 +17,15 @@ const SEED_CATEGORIES = [
   { id: 'slk',                  name: '(주)SLK종합건축사사무소', color: '#ef4444' },
 ];
 
+// v1 → v2 마이그레이션: 카테고리 이름 영문화 매핑
+const CATEGORY_NAME_V2 = {
+  personal:            'Personal Tasks',
+  ilsangmodu_interior: 'Ilsangmodu_Interior',
+  ilsangmodu_commerce: 'Ilsangmodu_E-Commerce',
+  slk:                 '(주)SLK종합건축사사무소',
+};
+const CATEGORY_ORDER_V2 = ['personal', 'devlab', 'ilsangmodu_commerce', 'ilsangmodu_interior', 'slk'];
+
 const COLOR_PALETTE = [
   '#6366f1', '#10b981', '#f59e0b', '#ef4444',
   '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16',
@@ -167,6 +176,26 @@ function ensureSeed(d) {
   if (!d || typeof d !== 'object') return freshData();
   if (!Array.isArray(d.categories)) d.categories = [];
   if (!Array.isArray(d.notes)) d.notes = [];
+  if (!d.version) d.version = 1;
+
+  // v1 → v2: 카테고리 이름 영문화, Dev Lab 추가, 순서 재정렬
+  if (d.version < 2) {
+    for (const c of d.categories) {
+      if (CATEGORY_NAME_V2[c.id]) c.name = CATEGORY_NAME_V2[c.id];
+    }
+    if (!d.categories.find(c => c.id === 'devlab')) {
+      d.categories.push({ id: 'devlab', name: 'Dev Lab', color: '#8b5cf6', projects: [] });
+    }
+    d.categories.sort((a, b) => {
+      const ai = CATEGORY_ORDER_V2.indexOf(a.id);
+      const bi = CATEGORY_ORDER_V2.indexOf(b.id);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    d.version = 2;
+  }
+
   // 비어 있을 때만 시드. 이후 사용자가 삭제한 분류는 다시 만들지 않음.
   if (d.categories.length === 0) {
     d.categories = SEED_CATEGORIES.map(c => ({ ...c, projects: [] }));
@@ -180,7 +209,6 @@ function ensureSeed(d) {
       }
     }
   }
-  if (!d.version) d.version = 1;
   if (!d.updatedAt) d.updatedAt = now();
   return d;
 }
@@ -1239,9 +1267,14 @@ async function init() {
   try {
     const remote = await fetchGist();
     if (remote && remote.categories) {
+      const prevVersion = remote.version || 1;
       state.data = ensureSeed(remote);
       saveLocal(state.data);
       render();
+      if (state.data.version > prevVersion) {
+        await pushGist(state.data);
+        toast('카테고리 업데이트 완료');
+      }
     } else if (remote === null) {
       // Gist 파일이 비어있거나 없음 — 로컬에 실제 데이터가 없을 때만 시드 push
       const hasData = state.data.categories.some(c => c.projects.length > 0)
