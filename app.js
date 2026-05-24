@@ -10,10 +10,11 @@ const PUSH_DEBOUNCE = 1500;
 const DATA_FILENAME = 'data.json';
 
 const SEED_CATEGORIES = [
-  { id: 'personal',             name: '개인',                       color: '#6366f1' },
-  { id: 'ilsangmodu_interior',  name: '일상모두_인테리어',          color: '#10b981' },
-  { id: 'ilsangmodu_commerce',  name: '일상모두_온라인커머스',      color: '#f59e0b' },
-  { id: 'slk',                  name: '(주)SLK종합건축사사무소',    color: '#ef4444' },
+  { id: 'personal',             name: 'Personal Tasks',          color: '#6366f1' },
+  { id: 'devlab',               name: 'Dev Lab',                 color: '#8b5cf6' },
+  { id: 'ilsangmodu_commerce',  name: 'Ilsangmodu_E-Commerce',   color: '#f59e0b' },
+  { id: 'ilsangmodu_interior',  name: 'Ilsangmodu_Interior',     color: '#10b981' },
+  { id: 'slk',                  name: '(주)SLK종합건축사사무소', color: '#ef4444' },
 ];
 
 const COLOR_PALETTE = [
