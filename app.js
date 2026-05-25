@@ -10,6 +10,7 @@ const PUSH_DEBOUNCE = 1500;
 const DATA_FILENAME = 'data.json';
 
 const SEED_CATEGORIES = [
+  { id: 'visionlab',            name: 'Vision Lab',              color: '#06b6d4' },
   { id: 'personal',             name: 'Personal Tasks',          color: '#6366f1' },
   { id: 'devlab',               name: 'Dev Lab',                 color: '#8b5cf6' },
   { id: 'ilsangmodu_commerce',  name: 'Ilsangmodu_E-Commerce',   color: '#f59e0b' },
@@ -24,7 +25,7 @@ const CATEGORY_NAME_V2 = {
   ilsangmodu_commerce: 'Ilsangmodu_E-Commerce',
   slk:                 '(주)SLK종합건축사사무소',
 };
-const CATEGORY_ORDER_V2 = ['personal', 'devlab', 'ilsangmodu_commerce', 'ilsangmodu_interior', 'slk'];
+const CATEGORY_ORDER_V2 = ['visionlab', 'personal', 'devlab', 'ilsangmodu_commerce', 'ilsangmodu_interior', 'slk'];
 
 const COLOR_PALETTE = [
   '#6366f1', '#10b981', '#f59e0b', '#ef4444',
@@ -183,6 +184,10 @@ function ensureSeed(d) {
     if (CATEGORY_NAME_V2[c.id] && c.name !== CATEGORY_NAME_V2[c.id]) {
       c.name = CATEGORY_NAME_V2[c.id];
     }
+  }
+  // Vision Lab 없으면 맨 앞에 추가
+  if (!d.categories.find(c => c.id === 'visionlab')) {
+    d.categories.unshift({ id: 'visionlab', name: 'Vision Lab', color: '#06b6d4', projects: [] });
   }
   // Dev Lab 없으면 personal 바로 다음에 추가
   if (!d.categories.find(c => c.id === 'devlab')) {
