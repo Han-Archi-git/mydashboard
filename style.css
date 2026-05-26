@@ -215,7 +215,23 @@ a:hover { color: var(--accent-2); }
 .ov-top      { grid-column: span 6; }
 .ov-donuts   { grid-column: span 7; }
 .ov-bar      { grid-column: span 5; }
-.ov-duesoon  { grid-column: span 12; }
+.ov-duesoon  { grid-column: span 6; }
+.ov-recent   { grid-column: span 6; }
+
+.recent-list { display: flex; flex-direction: column; gap: 6px; }
+.recent-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  text-decoration: none; font-size: 13px; color: var(--text);
+}
+.recent-item:hover { background: rgba(255,255,255,0.08); }
+.ri-when {
+  font-family: var(--font-num); font-size: 11px;
+  color: var(--muted); white-space: nowrap; min-width: 48px;
+}
+.ri-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 /* TOP 5 projects list inside overview */
 .top-projects { display: flex; flex-direction: column; gap: 8px; }
@@ -906,7 +922,7 @@ a:hover { color: var(--accent-2); }
 @media (max-width: 900px) {
   .overview { grid-template-columns: repeat(6, 1fr); }
   .ov-today, .ov-week { grid-column: span 3; }
-  .ov-top, .ov-donuts, .ov-bar, .ov-duesoon { grid-column: span 6; }
+  .ov-top, .ov-donuts, .ov-bar, .ov-duesoon, .ov-recent { grid-column: span 6; }
   .donut-grid { grid-template-columns: repeat(4, 1fr); }
 }
 @media (max-width: 640px) {
@@ -929,7 +945,7 @@ a:hover { color: var(--accent-2); }
 
   .overview { grid-template-columns: 1fr 1fr; gap: 10px; }
   .ov-today, .ov-week { grid-column: span 1; }
-  .ov-top, .ov-donuts, .ov-bar, .ov-duesoon { grid-column: span 2; }
+  .ov-top, .ov-donuts, .ov-bar, .ov-duesoon, .ov-recent { grid-column: span 2; }
   .ov-card .stat-num { font-size: 28px; }
   .donut-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .donut-cell svg { width: 76px; height: 76px; }

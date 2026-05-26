@@ -256,6 +256,29 @@ function statsCompletedWeek()  {
   const d = startOfDay(new Date()); d.setDate(d.getDate() - 6);
   return tasksCompletedSince(d.getTime());
 }
+function relTime(ts) {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  const hr  = Math.floor(diff / 3600000);
+  const day = Math.floor(diff / 86400000);
+  if (min < 1)  return '방금';
+  if (min < 60) return `${min}분 전`;
+  if (hr  < 24) return `${hr}시간 전`;
+  if (day <  7) return `${day}일 전`;
+  return new Date(ts).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+}
+
+function statsRecentManual(limit = 10) {
+  const items = [];
+  forEachTask((t, ph, p, c) => {
+    if (t.manual && t.createdAt && !t.done) {
+      items.push({ task: t, phase: ph, project: p, category: c, ts: new Date(t.createdAt).getTime() });
+    }
+  });
+  items.sort((a, b) => b.ts - a.ts);
+  return items.slice(0, limit);
+}
+
 function statsTop5Projects() {
   const arr = [];
   for (const c of state.data.categories) {
@@ -317,11 +340,12 @@ function renderDonut(pct, color, size = 92) {
 }
 
 function renderOverview() {
-  const today = statsCompletedToday();
-  const week  = statsCompletedWeek();
-  const top5  = statsTop5Projects();
-  const last7 = statsLast7Days();
-  const due   = statsDueSoon();
+  const today  = statsCompletedToday();
+  const week   = statsCompletedWeek();
+  const top5   = statsTop5Projects();
+  const last7  = statsLast7Days();
+  const due    = statsDueSoon();
+  const recent = statsRecentManual(10);
   const cats  = state.data.categories;
 
   // top5
@@ -400,6 +424,16 @@ function renderOverview() {
       <div class="ov-card ov-duesoon">
         <h3>마감 임박 (7일 이내)</h3>
         <div class="duesoon-list">${dueHtml}</div>
+      </div>
+      <div class="ov-card ov-recent">
+        <h3>최근 추가</h3>
+        <div class="recent-list">${recent.length ? recent.map(item => `
+          <a href="#/p/${encodeURIComponent(item.project.id)}" class="recent-item">
+            <span class="ri-when">${relTime(item.ts)}</span>
+            <span class="ri-title">${escapeHtml(item.task.title)}</span>
+            <span class="ri-meta">${escapeHtml(item.category.name)} · ${escapeHtml(item.project.name)}</span>
+          </a>`).join('') : `<div class="duesoon-empty">직접 추가한 할일 없음</div>`}
+        </div>
       </div>
     </section>
   `;
@@ -488,7 +522,7 @@ function movePhase(pid, phid, dir) {
 }
 function addTask(pid, phid, title) {
   const f = findPhase(pid, phid); if (!f) return;
-  f.phase.tasks.push({ id: uid(), title, done: false, memo: '', due: null });
+  f.phase.tasks.push({ id: uid(), title, done: false, memo: '', due: null, createdAt: now(), manual: true });
   commit();
 }
 function toggleTask(tid) {
