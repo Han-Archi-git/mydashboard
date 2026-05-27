@@ -598,6 +598,21 @@ a:hover { color: var(--accent-2); }
   flex: 1;
   color: #1a2540;
 }
+.note-edit-area {
+  width: 100%;
+  min-height: 72px;
+  background: transparent;
+  border: none;
+  outline: 2px solid rgba(0,0,0,0.25);
+  border-radius: 4px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #1a2540;
+  font-family: inherit;
+  padding: 2px 4px;
+  flex: 1;
+}
 .note-actions {
   display: flex;
   justify-content: flex-end;

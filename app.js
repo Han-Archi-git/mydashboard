@@ -1061,10 +1061,29 @@ document.addEventListener('click', async e => {
   }
   if (a === 'edit-note') {
     e.preventDefault();
-    const n = state.data.notes.find(n => n.id === btn.dataset.noteId);
+    const noteId = btn.dataset.noteId;
+    const n = state.data.notes.find(n => n.id === noteId);
     if (!n) return;
-    const v = prompt('메모 수정', n.text);
-    if (v !== null) updateNote(btn.dataset.noteId, v.trim());
+    const card = btn.closest('.note-card');
+    if (card.classList.contains('editing')) return;
+    card.classList.add('editing');
+    const textEl = card.querySelector('.note-text');
+    const ta = document.createElement('textarea');
+    ta.className = 'note-edit-area';
+    ta.value = n.text;
+    textEl.replaceWith(ta);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+    const save = () => {
+      const v = ta.value.trim();
+      if (v && v !== n.text) updateNote(noteId, v);
+      else render();
+    };
+    ta.addEventListener('blur', save);
+    ta.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape') { ev.preventDefault(); render(); }
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); ta.blur(); }
+    });
     return;
   }
   if (a === 'delete-note') {
