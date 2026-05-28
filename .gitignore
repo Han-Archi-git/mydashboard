@@ -9,3 +9,13 @@ node_modules/
 # Local Claude Code config and worklog (machine-specific, not portable)
 .claude/
 .claude-worklog.md
+
+# 환경변수 (PAT, Gist ID) — 절대 커밋 금지
+.env
+
+# 데이터 백업 스냅샷 (Gist 데이터라 커밋 불필요)
+backup_*.json
+
+# Python 캐시
+__pycache__/
+*.pyc

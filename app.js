@@ -637,6 +637,157 @@ function moveTask(tid, dir) {
       }
 }
 
+// ---------- Drag & Drop reorder ----------
+// 순서 이동만 수행한다. 출발/도착 중 하나라도 못 찾으면 데이터를 건드리지 않는다.
+function findPhaseById(phid) {
+  for (const c of state.data.categories)
+    for (const p of c.projects) {
+      const ph = p.phases.find(x => x.id === phid);
+      if (ph) return ph;
+    }
+  return null;
+}
+// 할일: 같은 단계 재정렬 + 다른 단계로 이동. beforeTid 앞에 삽입(없으면 끝).
+function dndMoveTask(srcTid, destPhid, beforeTid) {
+  if (srcTid === beforeTid) return;
+  const dest = findPhaseById(destPhid);
+  if (!dest) return;
+  let srcPhase = null, srcIdx = -1;
+  for (const c of state.data.categories)
+    for (const p of c.projects)
+      for (const ph of p.phases) {
+        const i = ph.tasks.findIndex(t => t.id === srcTid);
+        if (i !== -1) { srcPhase = ph; srcIdx = i; }
+      }
+  if (!srcPhase) return;
+  const [task] = srcPhase.tasks.splice(srcIdx, 1);
+  let pos = beforeTid ? dest.tasks.findIndex(t => t.id === beforeTid) : dest.tasks.length;
+  if (pos < 0) pos = dest.tasks.length;
+  dest.tasks.splice(pos, 0, task);
+  commit();
+}
+// 세부항목: 같은 할일 내에서만 재정렬.
+function dndMoveSub(taskId, srcSid, beforeSid) {
+  if (srcSid === beforeSid) return;
+  const t = findTask(taskId);
+  if (!t || !Array.isArray(t.subItems)) return;
+  const i = t.subItems.findIndex(s => s.id === srcSid);
+  if (i < 0) return;
+  const [s] = t.subItems.splice(i, 1);
+  let pos = beforeSid ? t.subItems.findIndex(x => x.id === beforeSid) : t.subItems.length;
+  if (pos < 0) pos = t.subItems.length;
+  t.subItems.splice(pos, 0, s);
+  commit();
+}
+// 단계: 같은 프로젝트 내에서 재정렬.
+function dndMovePhase(pid, srcPhid, beforePhid) {
+  if (srcPhid === beforePhid) return;
+  const f = findProject(pid);
+  if (!f) return;
+  const arr = f.project.phases;
+  const i = arr.findIndex(p => p.id === srcPhid);
+  if (i < 0) return;
+  const [ph] = arr.splice(i, 1);
+  let pos = beforePhid ? arr.findIndex(p => p.id === beforePhid) : arr.length;
+  if (pos < 0) pos = arr.length;
+  arr.splice(pos, 0, ph);
+  commit();
+}
+
+let dragState = null;
+function dndCleanup() {
+  document.querySelectorAll('.dragging, .drag-over-top, .drag-over-bottom')
+    .forEach(el => el.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom'));
+  dragState = null;
+}
+function dndIsAfter(el, clientY) {
+  const r = el.getBoundingClientRect();
+  return clientY > r.top + r.height / 2;
+}
+document.addEventListener('dragstart', e => {
+  // 입력/버튼에서 시작한 드래그는 무시(클릭·편집 보호)
+  if (e.target.closest('input, textarea, button, a')) { e.preventDefault(); return; }
+  const subLi = e.target.closest('li.sub-item');
+  const taskLi = e.target.closest('li.task');
+  const phHead = e.target.closest('.phase-head');
+  if (subLi) {
+    const owner = subLi.closest('li.task');
+    dragState = { kind: 'sub', id: subLi.dataset.subId, taskId: owner && owner.dataset.taskId };
+    subLi.classList.add('dragging');
+  } else if (taskLi) {
+    dragState = { kind: 'task', id: taskLi.dataset.taskId };
+    taskLi.classList.add('dragging');
+  } else if (phHead) {
+    const sec = phHead.closest('.phase');
+    dragState = { kind: 'phase', id: sec.dataset.phaseId, projectId: sec.dataset.projectId };
+    sec.classList.add('dragging');
+  } else { return; }
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragState.id); } catch (_) {}
+});
+document.addEventListener('dragover', e => {
+  if (!dragState) return;
+  let over = null;
+  if (dragState.kind === 'task') over = e.target.closest('li.task');
+  else if (dragState.kind === 'sub') over = e.target.closest('li.sub-item');
+  else if (dragState.kind === 'phase') over = e.target.closest('.phase');
+  // 적절한 드롭 영역(목록/섹션) 위라면 항상 드롭 허용
+  const inZone = over || (dragState.kind === 'task' && e.target.closest('ul.task-list'))
+    || (dragState.kind === 'sub' && e.target.closest('ul.sub-list'));
+  if (!inZone) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.drag-over-top, .drag-over-bottom')
+    .forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'));
+  if (over && !over.classList.contains('dragging')) {
+    over.classList.add(dndIsAfter(over, e.clientY) ? 'drag-over-bottom' : 'drag-over-top');
+  }
+});
+document.addEventListener('drop', e => {
+  if (!dragState) { return; }
+  e.preventDefault();
+  const st = dragState;
+  if (st.kind === 'task') {
+    const overLi = e.target.closest('li.task');
+    const phase = (overLi && overLi.closest('.phase')) || e.target.closest('.phase');
+    if (phase) {
+      let beforeId = null;
+      if (overLi && overLi.dataset.taskId !== st.id) {
+        beforeId = dndIsAfter(overLi, e.clientY)
+          ? (overLi.nextElementSibling && overLi.nextElementSibling.dataset.taskId) || null
+          : overLi.dataset.taskId;
+      }
+      dndMoveTask(st.id, phase.dataset.phaseId, beforeId);
+    }
+  } else if (st.kind === 'sub') {
+    const overLi = e.target.closest('li.sub-item');
+    const taskLi = (overLi && overLi.closest('li.task')) || e.target.closest('li.task');
+    if (taskLi && taskLi.dataset.taskId === st.taskId) {
+      let beforeId = null;
+      if (overLi && overLi.dataset.subId !== st.id) {
+        beforeId = dndIsAfter(overLi, e.clientY)
+          ? (overLi.nextElementSibling && overLi.nextElementSibling.dataset.subId) || null
+          : overLi.dataset.subId;
+      }
+      dndMoveSub(st.taskId, st.id, beforeId);
+    }
+  } else if (st.kind === 'phase') {
+    const overSec = e.target.closest('.phase');
+    if (overSec && overSec.dataset.projectId) {
+      let beforeId = null;
+      if (overSec.dataset.phaseId !== st.id) {
+        const sib = overSec.nextElementSibling;
+        beforeId = dndIsAfter(overSec, e.clientY)
+          ? (sib && sib.classList.contains('phase') ? sib.dataset.phaseId : null)
+          : overSec.dataset.phaseId;
+      }
+      dndMovePhase(overSec.dataset.projectId, st.id, beforeId);
+    }
+  }
+  dndCleanup();
+});
+document.addEventListener('dragend', dndCleanup);
+
 // ---------- Routing ----------
 function currentRoute() {
   const hash = location.hash.slice(1) || '/';
@@ -801,8 +952,8 @@ function renderProject(pid) {
     const isOpen = explicit !== undefined ? explicit : !isDone;
     const tasks = ph.tasks.map(t => renderTask(t, p.id, ph.id)).join('');
     return `
-      <section class="phase ${isActive ? 'active' : ''} ${isOpen ? 'open' : ''}" data-phase-id="${escapeHtml(ph.id)}">
-        <header class="phase-head" data-action="toggle-phase">
+      <section class="phase ${isActive ? 'active' : ''} ${isOpen ? 'open' : ''}" data-phase-id="${escapeHtml(ph.id)}" data-project-id="${escapeHtml(p.id)}">
+        <header class="phase-head" data-action="toggle-phase" draggable="true" title="드래그해서 단계 순서 변경">
           <span class="phase-caret">▶</span>
           <span class="phase-name ${isDone ? 'done' : ''}">${escapeHtml(ph.name)}</span>
           <span class="phase-meta">${ph.tasks.filter(t => t.done).length}/${ph.tasks.length} · ${fmtPct(phPct)}</span>
@@ -853,7 +1004,7 @@ function renderTask(t, pid, phid) {
   const subsHtml = hasSubs ? `
     <ul class="sub-list">
       ${t.subItems.map(s => `
-        <li class="sub-item ${s.done ? 'done' : ''}" data-sub-id="${escapeHtml(s.id)}">
+        <li class="sub-item ${s.done ? 'done' : ''}" data-sub-id="${escapeHtml(s.id)}" draggable="true">
           <input type="checkbox" ${s.done ? 'checked' : ''} data-action="toggle-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}">
           <span class="sub-text" data-action="edit-sub" data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="클릭해서 편집">${escapeHtml(s.text)}</span>
           <button class="row-btn" data-action="move-sub-up"   data-task-id="${escapeHtml(t.id)}" data-sub-id="${escapeHtml(s.id)}" title="위로">▲</button>
@@ -868,7 +1019,7 @@ function renderTask(t, pid, phid) {
     </form>`;
 
   return `
-    <li class="task ${taskDone ? 'done' : ''} ${hasSubs ? 'has-subs' : ''}" data-task-id="${escapeHtml(t.id)}">
+    <li class="task ${taskDone ? 'done' : ''} ${hasSubs ? 'has-subs' : ''}" data-task-id="${escapeHtml(t.id)}" draggable="true">
       <div class="task-main">
         <input type="checkbox" ${taskDone ? 'checked' : ''} data-action="toggle-task" data-task-id="${escapeHtml(t.id)}" ${hasSubs ? 'title="하위 항목 모두 체크/해제"' : ''}>
         <div class="task-body">
