@@ -80,6 +80,56 @@ const loadLocal = () => {
 };
 const saveLocal = d => localStorage.setItem(DATA_KEY, JSON.stringify(d));
 
+// ---------- 비밀번호 자격증명 금고 (WebCrypto) ----------
+// PAT/Gist ID를 비밀번호로 AES-256-GCM 암호화해 auth.enc.json(공개 Pages)에 보관.
+// 암호문 자체는 비밀번호 없이는 무의미하므로 공개 저장소에 둬도 데이터/토큰이 노출되지 않는다.
+const VAULT_FILE = 'auth.enc.json';   // Pages 사이트 루트 기준 상대 경로
+const PBKDF2_ITER = 600000;           // OWASP 권장 수준 반복
+
+const _b64enc = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const _b64dec = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+
+// 비밀번호 + salt → AES-GCM 키 파생
+async function _deriveKey(password, salt) {
+  const baseKey = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+    baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+}
+
+// {pat, gistId} → 암호화된 금고 객체(직렬화 가능)
+async function encryptCreds(password, creds) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(12));
+  const key  = await _deriveKey(password, salt);
+  const pt   = new TextEncoder().encode(JSON.stringify(creds));
+  const ct   = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, pt);
+  return { v: 1, kdf: 'PBKDF2', iter: PBKDF2_ITER, hash: 'SHA-256',
+           salt: _b64enc(salt), iv: _b64enc(iv), ct: _b64enc(ct) };
+}
+
+// 금고 객체 + 비밀번호 → {pat, gistId} (비밀번호 틀리면 throw)
+async function decryptCreds(password, vault) {
+  const salt = _b64dec(vault.salt);
+  const iv   = _b64dec(vault.iv);
+  const key  = await _deriveKey(password, salt);
+  const pt   = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, _b64dec(vault.ct));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+// Pages에 올라간 auth.enc.json 조회 (없으면 null)
+async function fetchVault() {
+  try {
+    const res = await fetch(`${VAULT_FILE}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const v = await res.json();
+    return (v && v.ct && v.salt && v.iv) ? v : null;
+  } catch { return null; }
+}
+
 // ---------- Gist Sync ----------
 async function fetchGist() {
   const pat = loadPat(), gistId = loadGistId();
@@ -1061,9 +1111,37 @@ function showModal(html) {
 }
 function closeModal() { $('#modal-root').innerHTML = ''; }
 
-function showAuthModal() {
+// 인증 모달 진입점: 비밀번호 금고가 있으면 비밀번호 로그인을 우선 노출
+async function showAuthModal() {
+  const vault = await fetchVault();
+  if (vault && !loadPat() && !loadGistId()) showPwLoginModal();
+  else showManualAuthModal(!!vault);
+}
+
+// 새 기기용 — 비밀번호만 입력해 자동 연결
+function showPwLoginModal() {
+  showModal(`
+    <h2>비밀번호로 로그인</h2>
+    <p>설정해 둔 비밀번호를 입력하면 PAT/Gist 입력 없이 자동 연결됩니다.</p>
+    <form data-modal-form="pwlogin">
+      <label>비밀번호</label>
+      <input name="password" type="password" autocomplete="current-password" required>
+      <div class="field-hint" id="pwlogin-msg">처음이라면 <b>PAT 직접 입력</b>으로 연결 후, 설정에서 비밀번호를 만드세요.</div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-action="manual-auth">PAT 직접 입력</button>
+        <button type="submit" class="btn">로그인</button>
+      </div>
+    </form>
+  `);
+}
+
+// 기존 — PAT/Gist ID 직접 입력
+function showManualAuthModal(hasVault) {
   const pat = loadPat() || '';
   const gid = loadGistId() || '';
+  const pwBtn = hasVault
+    ? `<button type="button" class="btn ghost" data-action="pw-login">비밀번호로 로그인</button>`
+    : '';
   showModal(`
     <h2>GitHub 연결</h2>
     <p>Private Gist에 데이터를 저장합니다. <b>처음 한 번만</b> 입력하면 됩니다.</p>
@@ -1077,11 +1155,65 @@ function showAuthModal() {
       <div class="field-hint"><a href="https://gist.github.com/" target="_blank">새 Private Gist 만들기</a> · 파일명 <b>data.json</b>, 내용은 비워둬도 됨. 만든 뒤 URL의 마지막 부분이 ID입니다.</div>
 
       <div class="modal-actions">
+        ${pwBtn}
         <button type="button" class="btn ghost" data-action="modal-close">취소</button>
         <button type="submit" class="btn">저장하고 연결</button>
       </div>
     </form>
   `);
+}
+
+// 비밀번호 설정 — 현재 PAT/Gist를 암호화해 auth.enc.json 생성
+function showPwSetModal() {
+  if (!loadPat() || !loadGistId()) { toast('먼저 PAT/Gist로 연결한 뒤 설정하세요.'); return; }
+  showModal(`
+    <h2>비밀번호 설정</h2>
+    <p>이 비밀번호로 <b>다른 기기에서 PAT 입력 없이</b> 로그인할 수 있습니다. 현재 PAT/Gist ID가 비밀번호로 암호화됩니다.</p>
+    <form data-modal-form="pwset">
+      <label>새 비밀번호</label>
+      <input name="password" type="password" autocomplete="new-password" required minlength="8">
+      <label>비밀번호 확인</label>
+      <input name="password2" type="password" autocomplete="new-password" required>
+      <div class="field-hint">8자 이상. 공개 저장소에 <b>암호문</b>으로 보관되므로 추측하기 어려운 비밀번호를 쓰세요. 잊으면 복구 불가(PAT 재입력으로 재설정).</div>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" data-action="modal-close">취소</button>
+        <button type="submit" class="btn">암호화 파일 생성</button>
+      </div>
+    </form>
+  `);
+}
+
+// 암호화 결과 안내 — auth.enc.json 배치 방법
+function showVaultResultModal(json) {
+  showModal(`
+    <h2>암호화 완료</h2>
+    <p><b>auth.enc.json</b> 파일이 다운로드되었습니다. 아래 내용을 저장소 루트의 <code>auth.enc.json</code>으로 커밋/푸시하면, 다른 기기에서 비밀번호만으로 로그인됩니다.</p>
+    <textarea id="vault-json" readonly style="width:100%;height:140px;font-family:monospace;font-size:12px">${escapeHtml(json)}</textarea>
+    <div class="field-hint">GitHub Pages 반영까지 1~2분 소요. 비밀번호를 바꾸면 이 파일을 다시 만들어 교체하세요.</div>
+    <div class="modal-actions">
+      <button type="button" class="btn ghost" data-action="copy-vault">내용 복사</button>
+      <button type="button" class="btn" data-action="modal-close">닫기</button>
+    </div>
+  `);
+}
+
+// 연결 후 동기화 (auth/pwlogin 공용)
+async function connectAndSync() {
+  try {
+    const remote = await fetchGist();
+    if (remote && remote.categories) {
+      state.data = ensureSeed(remote);
+      saveLocal(state.data);
+    } else {
+      state.data = ensureSeed(state.data || freshData());
+      saveLocal(state.data);
+      await pushGist(state.data);
+    }
+    render();
+  } catch (err) {
+    console.error(err);
+    toast('연결 실패 — 토큰/Gist ID 확인');
+  }
 }
 
 function showEditTaskModal(tid) {
@@ -1120,6 +1252,7 @@ function showSettingsModal() {
     <div class="modal-actions">
       <button type="button" class="btn ghost" data-action="modal-close">닫기</button>
       <button type="button" class="btn ghost" data-action="restore-revision">이전 버전 복구</button>
+      <button type="button" class="btn ghost" data-action="set-password">비밀번호 설정</button>
       <button type="button" class="btn ghost" data-action="reconnect">재연결</button>
       <button type="button" class="btn danger" data-action="signout">연결 해제</button>
     </div>
@@ -1314,6 +1447,14 @@ document.addEventListener('click', async e => {
   }
   if (a === 'modal-close') { closeModal(); return; }
   if (a === 'reconnect')   { closeModal(); showAuthModal(); return; }
+  if (a === 'manual-auth') { showManualAuthModal(true); return; }
+  if (a === 'pw-login')    { showPwLoginModal(); return; }
+  if (a === 'set-password'){ showPwSetModal(); return; }
+  if (a === 'copy-vault') {
+    const ta = $('#vault-json');
+    if (ta) { navigator.clipboard?.writeText(ta.value).then(() => toast('복사됨')); }
+    return;
+  }
   if (a === 'restore-revision') { showRestoreModal(); return; }
   if (a === 'restore-version') {
     const version = btn.dataset.version;
@@ -1351,20 +1492,43 @@ document.addEventListener('submit', async e => {
     saveGistId(data.gid.trim());
     closeModal();
     toast('연결됨, 동기화 중...');
+    await connectAndSync();
+    return;
+  }
+
+  if (form.dataset.modalForm === 'pwlogin') {
+    const msg = $('#pwlogin-msg');
+    const vault = await fetchVault();
+    if (!vault) { if (msg) msg.textContent = '저장된 비밀번호 설정이 없습니다. PAT를 직접 입력하세요.'; return; }
     try {
-      const remote = await fetchGist();
-      if (remote && remote.categories) {
-        state.data = ensureSeed(remote);
-        saveLocal(state.data);
-      } else {
-        state.data = ensureSeed(state.data || freshData());
-        saveLocal(state.data);
-        await pushGist(state.data);
-      }
-      render();
+      const creds = await decryptCreds(data.password || '', vault);
+      if (!creds.pat || !creds.gistId) throw new Error('손상된 자격증명');
+      savePat(creds.pat);
+      saveGistId(creds.gistId);
+      closeModal();
+      toast('로그인됨, 동기화 중...');
+      await connectAndSync();
+    } catch (err) {
+      if (msg) { msg.textContent = '비밀번호가 틀렸거나 데이터가 손상되었습니다.'; msg.style.color = '#f87171'; }
+    }
+    return;
+  }
+
+  if (form.dataset.modalForm === 'pwset') {
+    const pw = data.password || '', pw2 = data.password2 || '';
+    if (pw.length < 8) { toast('비밀번호는 8자 이상이어야 합니다.'); return; }
+    if (pw !== pw2)    { toast('비밀번호가 일치하지 않습니다.'); return; }
+    try {
+      const vault = await encryptCreds(pw, { pat: loadPat(), gistId: loadGistId() });
+      const json = JSON.stringify(vault, null, 2);
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      const dl = document.createElement('a');
+      dl.href = url; dl.download = VAULT_FILE; dl.click();
+      URL.revokeObjectURL(url);
+      showVaultResultModal(json);
     } catch (err) {
       console.error(err);
-      toast('연결 실패 — 토큰/Gist ID 확인');
+      toast('암호화 실패: ' + err.message);
     }
     return;
   }
