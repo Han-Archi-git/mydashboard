@@ -975,3 +975,60 @@ a:hover { color: var(--accent-2); }
 .task.drag-over-bottom, .sub-item.drag-over-bottom { box-shadow: inset 0 -2px 0 0 var(--accent, #60a5fa); }
 .phase.drag-over-top { box-shadow: 0 -3px 0 0 var(--accent, #60a5fa); }
 .phase.drag-over-bottom { box-shadow: 0 3px 0 0 var(--accent, #60a5fa); }
+
+/* ---------- 노드맵 (프로젝트 단위, 흑백 위주 + 최소 포인트) ---------- */
+:root {
+  --mono-line:   rgba(224, 242, 254, 0.28);
+  --mono-line-2: rgba(224, 242, 254, 0.5);
+  --mono-node-bg: rgba(10, 18, 34, 0.85);
+}
+
+.view-toggle { display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.view-toggle-btn { padding: 7px 14px; font-size: 13px; color: var(--muted); text-decoration: none; }
+.view-toggle-btn.active { background: var(--surface-3); color: var(--text); }
+.view-toggle-btn:not(.active):hover { background: var(--surface); color: var(--text-dim); }
+
+.nodemap-toolbar { margin-bottom: 12px; }
+.nodemap-toolbar .add-input { max-width: 320px; }
+
+.nodemap-scroll { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-0); }
+.nodemap-canvas { position: relative; }
+
+.nodemap-spine {
+  position: absolute; top: 0; width: 1px;
+  background: linear-gradient(180deg, transparent, var(--mono-line-2) 8%, var(--mono-line-2) 92%, transparent);
+}
+
+.nodemap-lines { position: absolute; top: 0; left: 0; pointer-events: none; }
+.node-link { stroke: var(--mono-line); stroke-width: 1; pointer-events: stroke; cursor: pointer; }
+.node-link:hover { stroke: var(--danger); }
+.node-link-temp { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+.node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 168px;
+  padding: 10px 12px;
+  background: var(--mono-node-bg);
+  border: 1px solid var(--mono-line-2);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  user-select: none;
+}
+.node:hover { border-color: var(--text-dim); }
+.node.dragging { cursor: grabbing; box-shadow: var(--glow); z-index: 5; }
+.node.done { opacity: 0.55; }
+.node.match { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.node.dim { opacity: 0.25; }
+
+.node-phase { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+.node-title { font-size: 13px; color: var(--text); line-height: 1.3; }
+.node-memo { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
+
+.node-connector {
+  position: absolute; right: -6px; top: 50%; transform: translateY(-50%);
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg-0); border: 1px solid var(--mono-line-2);
+  cursor: crosshair;
+}
+.node-connector:hover { border-color: var(--accent); background: var(--accent); }

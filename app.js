@@ -205,6 +205,12 @@ function ensureSeed(d) {
       p.phases = Array.isArray(p.phases) ? p.phases : [];
       for (const ph of p.phases) {
         ph.tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
+        for (const t of ph.tasks) {
+          // 노드맵용: 좌표 미배정(null)이면 렌더 시 세로 흐름 기준 자동배치
+          if (typeof t.x !== 'number') t.x = null;
+          if (typeof t.y !== 'number') t.y = null;
+          if (!Array.isArray(t.links)) t.links = [];
+        }
       }
     }
   }
@@ -794,7 +800,7 @@ function currentRoute() {
   const parts = hash.split('/').filter(Boolean);
   if (!parts.length) return { name: 'home' };
   if (parts[0] === 'c' && parts[1]) return { name: 'category', id: decodeURIComponent(parts[1]) };
-  if (parts[0] === 'p' && parts[1]) return { name: 'project',  id: decodeURIComponent(parts[1]) };
+  if (parts[0] === 'p' && parts[1]) return { name: 'project',  id: decodeURIComponent(parts[1]), view: parts[2] === 'map' ? 'map' : 'list' };
   return { name: 'home' };
 }
 const navigate = h => { location.hash = h; };
@@ -805,7 +811,10 @@ function render() {
   const r = currentRoute();
   if (r.name === 'home')      root.innerHTML = renderHome();
   else if (r.name === 'category') root.innerHTML = renderCategory(r.id);
-  else if (r.name === 'project')  root.innerHTML = renderProject(r.id);
+  else if (r.name === 'project')  {
+    if (r.view === 'map') { root.innerHTML = renderProjectMap(r.id); mountNodeCanvas(r.id); }
+    else root.innerHTML = renderProject(r.id);
+  }
   renderCrumbs(r);
   setSyncStatus(state.syncStatus);
 }
@@ -979,6 +988,10 @@ function renderProject(pid) {
         <div class="section-sub"><a href="#/c/${encodeURIComponent(c.id)}">${escapeHtml(c.name)}</a> · 전체 ${fmtPct(pct)}</div>
       </div>
       <div style="display:flex;gap:6px">
+        <div class="view-toggle">
+          <a href="#/p/${encodeURIComponent(p.id)}" class="view-toggle-btn active">리스트</a>
+          <a href="#/p/${encodeURIComponent(p.id)}/map" class="view-toggle-btn">노드맵</a>
+        </div>
         <button class="btn ghost" data-action="rename-project" data-project-id="${escapeHtml(p.id)}">이름변경</button>
         <button class="btn ghost" data-action="delete-project" data-project-id="${escapeHtml(p.id)}">삭제</button>
       </div>
@@ -992,6 +1005,215 @@ function renderProject(pid) {
       <button class="btn" type="submit">단계 추가</button>
     </form>
   `;
+}
+
+// ---------- 노드맵 (프로젝트 단위) ----------
+const NODEMAP_W = 900;
+const NODEMAP_SPINE_X = NODEMAP_W / 2;
+const NODEMAP_V_GAP = 120;
+const NODEMAP_TOP_PAD = 70;
+const NODEMAP_OFFSET_X = 110;
+
+// 좌표 미배정 task에 "위→아래 세로 흐름" 기본좌표를 부여 (state는 건드리지 않음, 렌더용 계산만)
+function nodemapLayout(project) {
+  const positions = {}; // taskId -> {x,y}
+  let row = 0;
+  project.phases.forEach(ph => {
+    ph.tasks.forEach((t, i) => {
+      if (typeof t.x === 'number' && typeof t.y === 'number') {
+        positions[t.id] = { x: t.x, y: t.y };
+      } else {
+        const offset = (i % 2 === 0) ? -NODEMAP_OFFSET_X : NODEMAP_OFFSET_X;
+        positions[t.id] = { x: NODEMAP_SPINE_X + offset, y: NODEMAP_TOP_PAD + row * NODEMAP_V_GAP };
+      }
+      row++;
+    });
+  });
+  return positions;
+}
+
+function renderProjectMap(pid) {
+  const f = findProject(pid);
+  if (!f) return `<div class="empty"><h3>프로젝트 없음</h3><p><a href="#/">홈으로</a></p></div>`;
+  const { category: c, project: p } = f;
+  const pct = progressOfProject(p);
+  const allTasks = [];
+  p.phases.forEach(ph => ph.tasks.forEach(t => allTasks.push({ t, ph })));
+  const positions = nodemapLayout(p);
+  const maxY = allTasks.reduce((m, { t }) => Math.max(m, (positions[t.id]?.y ?? 0)), 0);
+  const canvasH = Math.max(400, maxY + 160);
+
+  const nodesHtml = allTasks.map(({ t, ph }) => {
+    const pos = positions[t.id] || { x: NODEMAP_SPINE_X, y: NODEMAP_TOP_PAD };
+    const memoSnippet = t.memo ? escapeHtml(t.memo.slice(0, 60)) : '';
+    return `
+      <div class="node ${t.done ? 'done' : ''}" data-task-id="${escapeHtml(t.id)}" data-search="${escapeHtml((t.title + ' ' + (t.memo || '')).toLowerCase())}" style="left:${pos.x}px;top:${pos.y}px">
+        <div class="node-phase">${escapeHtml(ph.name)}</div>
+        <div class="node-title">${escapeHtml(t.title)}</div>
+        ${memoSnippet ? `<div class="node-memo">${memoSnippet}</div>` : ''}
+        <div class="node-connector" data-task-id="${escapeHtml(t.id)}" title="드래그해서 다른 노드와 연결"></div>
+      </div>`;
+  }).join('');
+
+  const drawn = new Set();
+  const linesHtml = allTasks.map(({ t }) => t).flatMap(t =>
+    (t.links || []).map(otherId => {
+      const key = [t.id, otherId].sort().join('|');
+      if (drawn.has(key) || !positions[otherId]) return '';
+      drawn.add(key);
+      const a = positions[t.id], b = positions[otherId];
+      return `<line class="node-link" data-a="${escapeHtml(t.id)}" data-b="${escapeHtml(otherId)}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+    })
+  ).join('');
+
+  return `
+    <div class="section-head">
+      <div>
+        <h2>${escapeHtml(p.name)}</h2>
+        <div class="section-sub"><a href="#/c/${encodeURIComponent(c.id)}">${escapeHtml(c.name)}</a> · 전체 ${fmtPct(pct)}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <div class="view-toggle">
+          <a href="#/p/${encodeURIComponent(p.id)}" class="view-toggle-btn">리스트</a>
+          <a href="#/p/${encodeURIComponent(p.id)}/map" class="view-toggle-btn active">노드맵</a>
+        </div>
+      </div>
+    </div>
+    <div class="nodemap-toolbar">
+      <input id="node-search" class="add-input" placeholder="🔍 메모·제목 검색" autocomplete="off">
+    </div>
+    <div class="nodemap-scroll">
+      <div id="node-canvas" class="nodemap-canvas" data-project-id="${escapeHtml(p.id)}" style="width:${NODEMAP_W}px;height:${canvasH}px">
+        <div class="nodemap-spine" style="left:${NODEMAP_SPINE_X}px;height:${canvasH}px"></div>
+        <svg class="nodemap-lines" width="${NODEMAP_W}" height="${canvasH}">${linesHtml}</svg>
+        ${nodesHtml || '<div class="empty" style="position:absolute;left:24px;top:24px">할일이 없습니다. 리스트 뷰에서 먼저 추가하세요.</div>'}
+      </div>
+    </div>
+  `;
+}
+
+function setTaskPos(tid, x, y) { updateTask(tid, { x, y }); }
+
+function linkTasks(aId, bId) {
+  if (!aId || !bId || aId === bId) return;
+  const a = findTask(aId), b = findTask(bId);
+  if (!a || !b) return;
+  if (!a.links.includes(bId)) a.links.push(bId);
+  if (!b.links.includes(aId)) b.links.push(aId);
+  commit();
+}
+
+function unlinkTasks(aId, bId) {
+  const a = findTask(aId), b = findTask(bId);
+  if (a) a.links = a.links.filter(id => id !== bId);
+  if (b) b.links = b.links.filter(id => id !== aId);
+  commit();
+}
+
+// 드래그/연결 상태는 모듈 전역에 둠 — mountNodeCanvas가 render()마다 재호출되므로
+// document 리스너를 매번 새로 붙이면 쌓이기 때문에 최초 1회만 바인딩(nodemapBound)한다.
+let nodemapDrag = null;   // { tid, el, startX, startY, origLeft, origTop, moved }
+let nodemapWireFrom = null;
+let nodemapTempLine = null;
+let nodemapBound = false;
+const NODEMAP_CLICK_THRESHOLD = 4; // px — 이보다 적게 움직이면 드래그가 아니라 클릭으로 취급
+
+function mountNodeCanvas(pid) {
+  const canvas = $('#node-canvas');
+  if (!canvas) return;
+
+  canvas.addEventListener('mousedown', e => {
+    const connector = e.target.closest('.node-connector');
+    const nodeEl = e.target.closest('.node');
+    if (connector) {
+      e.preventDefault();
+      nodemapWireFrom = connector.dataset.taskId;
+      const svg = canvas.querySelector('.nodemap-lines');
+      nodemapTempLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      nodemapTempLine.setAttribute('class', 'node-link-temp');
+      const r0 = nodeEl.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      const cx = r0.left - cr.left + r0.width / 2, cy = r0.top - cr.top + r0.height / 2;
+      nodemapTempLine.setAttribute('x1', cx); nodemapTempLine.setAttribute('y1', cy);
+      nodemapTempLine.setAttribute('x2', cx); nodemapTempLine.setAttribute('y2', cy);
+      svg.appendChild(nodemapTempLine);
+    } else if (nodeEl) {
+      // 주의: 여기서 preventDefault()를 호출하면 일부 브라우저/자동화 환경에서
+      // 뒤이은 click 이벤트가 억제된다(드래그 없는 순수 클릭 시 노드 편집이 안 열림).
+      // 텍스트 선택 방지는 CSS user-select:none으로 대신 처리(.node 규칙).
+      nodemapDrag = {
+        tid: nodeEl.dataset.taskId, el: nodeEl,
+        startX: e.clientX, startY: e.clientY,
+        origLeft: parseFloat(nodeEl.style.left), origTop: parseFloat(nodeEl.style.top),
+        moved: false,
+      };
+      nodeEl.classList.add('dragging');
+    }
+  });
+
+  canvas.addEventListener('click', e => {
+    if (e.target.closest('.node-connector')) return;
+    const nodeEl = e.target.closest('.node');
+    if (nodeEl) { showEditTaskModal(nodeEl.dataset.taskId); return; }
+    const line = e.target.closest('.node-link');
+    if (line) {
+      if (confirm('이 연결을 삭제할까요?')) unlinkTasks(line.dataset.a, line.dataset.b);
+    }
+  });
+
+  const search = $('#node-search');
+  if (search) {
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      canvas.querySelectorAll('.node').forEach(el => {
+        const match = !q || (el.dataset.search || '').includes(q);
+        el.classList.toggle('dim', !match);
+        el.classList.toggle('match', !!q && match);
+      });
+    });
+  }
+
+  if (nodemapBound) return;
+  nodemapBound = true;
+
+  document.addEventListener('mousemove', e => {
+    if (nodemapDrag) {
+      const dx = e.clientX - nodemapDrag.startX, dy = e.clientY - nodemapDrag.startY;
+      if (Math.abs(dx) > NODEMAP_CLICK_THRESHOLD || Math.abs(dy) > NODEMAP_CLICK_THRESHOLD) nodemapDrag.moved = true;
+      const nx = Math.max(0, nodemapDrag.origLeft + dx), ny = Math.max(0, nodemapDrag.origTop + dy);
+      nodemapDrag.el.style.left = nx + 'px';
+      nodemapDrag.el.style.top = ny + 'px';
+      nodemapUpdateLinesFor(nodemapDrag.tid, nx, ny);
+    } else if (nodemapWireFrom && nodemapTempLine) {
+      const c = $('#node-canvas');
+      if (!c) return;
+      const cr = c.getBoundingClientRect();
+      nodemapTempLine.setAttribute('x2', e.clientX - cr.left);
+      nodemapTempLine.setAttribute('y2', e.clientY - cr.top);
+    }
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (nodemapDrag) {
+      const nx = parseFloat(nodemapDrag.el.style.left), ny = parseFloat(nodemapDrag.el.style.top);
+      nodemapDrag.el.classList.remove('dragging');
+      if (nodemapDrag.moved) setTaskPos(nodemapDrag.tid, nx, ny);
+      nodemapDrag = null;
+    } else if (nodemapWireFrom) {
+      const targetEl = e.target.closest('.node');
+      if (nodemapTempLine) nodemapTempLine.remove();
+      if (targetEl && targetEl.dataset.taskId !== nodemapWireFrom) {
+        linkTasks(nodemapWireFrom, targetEl.dataset.taskId);
+      }
+      nodemapWireFrom = null; nodemapTempLine = null;
+    }
+  });
+}
+
+function nodemapUpdateLinesFor(tid, x, y) {
+  const canvas = $('#node-canvas');
+  if (!canvas) return;
+  canvas.querySelectorAll(`.node-link[data-a="${CSS.escape(tid)}"]`).forEach(l => { l.setAttribute('x1', x); l.setAttribute('y1', y); });
+  canvas.querySelectorAll(`.node-link[data-b="${CSS.escape(tid)}"]`).forEach(l => { l.setAttribute('x2', x); l.setAttribute('y2', y); });
 }
 
 function renderTask(t, pid, phid) {
