@@ -1496,6 +1496,7 @@ let nodemapPan = null;     // { scrollEl, startX, startY, startLeft, startTop }
 let nodemapSelected = new Set(); // 마퀴 다중선택된 task/phase id
 let nodemapMarquee = null;       // { startX, startY, box }
 let nodemapGroupDrag = null;     // { items:[{kind,id,el,origLeft,origTop}], startX, startY, moved }
+let nodemapResizeTarget = null;  // 리사이즈 핸들로 드래그 중인 노드 — mouseup에서 한 번만 저장
 const NODEMAP_CLICK_THRESHOLD = 4; // px — 이보다 적게 움직이면 드래그가 아니라 클릭으로 취급
 
 function nodemapCenter(canvas) {
@@ -1558,17 +1559,6 @@ function mountNodeCanvas(pid) {
 
   if (scrollEl) scrollEl.classList.toggle('pan-ready', nodemapPanKey);
 
-  // 네이티브 리사이즈(모서리 드래그)로 크기가 바뀌면 debounce 후 저장
-  const resizeTimers = new WeakMap();
-  const ro = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const el = entry.target;
-      clearTimeout(resizeTimers.get(el));
-      resizeTimers.set(el, setTimeout(() => nodemapSaveSize(el), 500));
-    }
-  });
-  canvas.querySelectorAll('.node[data-task-id], .node.phase-node').forEach(el => ro.observe(el));
-
   canvas.addEventListener('mousedown', e => {
     const connector = e.target.closest('.node-connector');
     const nodeEl = e.target.closest('.node');
@@ -1593,7 +1583,12 @@ function mountNodeCanvas(pid) {
       nodemapTempLine.setAttribute('x1', cx); nodemapTempLine.setAttribute('y1', cy);
       nodemapTempLine.setAttribute('x2', cx); nodemapTempLine.setAttribute('y2', cy);
       svg.appendChild(nodemapTempLine);
-    } else if (nodeEl && !nodeEl.classList.contains('hub-node') && !nodeEl.classList.contains('editing') && !nodemapNearResizeHandle(nodeEl, e)) {
+    } else if (nodeEl && !nodeEl.classList.contains('hub-node') && !nodeEl.classList.contains('editing') && nodemapNearResizeHandle(nodeEl, e)) {
+      // 리사이즈 핸들 영역 — 네이티브 리사이즈(브라우저 기본 동작)에 맡기고,
+      // 대상만 기억해뒀다가 mouseup 시점에 딱 한 번만 저장한다. 도중에 재렌더하면
+      // 드래그 중인 네이티브 리사이즈 자체가 끊겨서 "커졌다 다시 줄어드는" 것처럼 보인다.
+      nodemapResizeTarget = nodeEl;
+    } else if (nodeEl && !nodeEl.classList.contains('hub-node') && !nodeEl.classList.contains('editing')) {
       // 주의: 여기서 preventDefault()를 호출하면 일부 브라우저/자동화 환경에서
       // 뒤이은 click 이벤트가 억제된다(드래그 없는 순수 클릭 시 인라인 편집이 안 열림).
       // 텍스트 선택 방지는 CSS user-select:none으로 대신 처리(.node 규칙).
@@ -1777,6 +1772,11 @@ function mountNodeCanvas(pid) {
   });
 
   document.addEventListener('mouseup', e => {
+    if (nodemapResizeTarget) {
+      nodemapSaveSize(nodemapResizeTarget);
+      nodemapResizeTarget = null;
+      return;
+    }
     if (nodemapPan) {
       nodemapPan.scrollEl.classList.remove('panning');
       nodemapPan = null;
