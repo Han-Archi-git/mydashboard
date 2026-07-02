@@ -1184,6 +1184,8 @@ const NODEMAP_MIN_CANVAS = 20000;   // 캔버스 최소 크기 — 사실상 무
 
 // 노드 텍스트를 마크다운으로 렌더 (marked.js + DOMPurify, index.html에서 CDN 로드)
 // marked는 결과 HTML을 새니타이징하지 않으므로 반드시 DOMPurify를 거쳐야 XSS를 막을 수 있음.
+if (window.marked) marked.setOptions({ breaks: true }); // Shift+Enter로 넣은 한 줄바꿈도 그대로 <br>로 반영(표준 마크다운은 무시함)
+
 function nodemapRenderText(text) {
   const t = text || '';
   if (window.marked && window.DOMPurify) {
