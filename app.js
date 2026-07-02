@@ -1127,6 +1127,16 @@ function renderProject(pid) {
     const explicit = state.ui.phaseOpen[ph.id];
     const isOpen = explicit !== undefined ? explicit : !isDone;
     const tasks = ph.tasks.map(t => renderTask(t, p.id, ph.id)).join('');
+    // 다른 단계 소속 메모라도 노드맵에서 이 단계 노드와 와이어 연결돼 있으면(이중 연결) 여기에도 함께 표시
+    const crossLinked = [];
+    p.phases.forEach(otherPh => {
+      if (otherPh.id === ph.id) return;
+      otherPh.tasks.forEach(t => {
+        if ((t.links || []).includes(ph.id)) crossLinked.push(renderTask(t, p.id, ph.id, { crossLinkFrom: otherPh.name }));
+      });
+    });
+    const crossLinkedHtml = crossLinked.length
+      ? `<ul class="task-list cross-linked-list">${crossLinked.join('')}</ul>` : '';
     return `
       <section class="phase ${isActive ? 'active' : ''} ${isOpen ? 'open' : ''}" data-phase-id="${escapeHtml(ph.id)}" data-project-id="${escapeHtml(p.id)}">
         <header class="phase-head" data-action="toggle-phase" draggable="true" title="드래그해서 단계 순서 변경">
@@ -1140,6 +1150,7 @@ function renderProject(pid) {
         </header>
         <div class="phase-body">
           <ul class="task-list">${tasks}</ul>
+          ${crossLinkedHtml}
           <form class="add-row" data-action="add-task" data-project-id="${escapeHtml(p.id)}" data-phase-id="${escapeHtml(ph.id)}">
             <input class="add-input" name="title" placeholder="새 할일 (엔터로 추가)" autocomplete="off" required>
             <button class="btn ghost" type="submit">추가</button>
@@ -1425,12 +1436,52 @@ function nodemapFind(id) {
   return null;
 }
 
+// 노드 종류 판별: 허브(project, phases 보유) / 단계(phase, tasks 보유) / 메모(task)
+function nodemapKind(node) {
+  if (node.phases) return 'hub';
+  if (node.tasks) return 'phase';
+  return 'task';
+}
+
+// 메모가 지금 실제로 속해 있는 단계를 찾는다 (단일 소속 원칙 — 메모는 항상 정확히 하나의 phase.tasks에만 존재)
+function findTaskOwner(tid) {
+  for (const c of state.data.categories)
+    for (const p of c.projects)
+      for (const ph of p.phases) {
+        const idx = ph.tasks.findIndex(t => t.id === tid);
+        if (idx !== -1) return { category: c, project: p, phase: ph, idx };
+      }
+  return null;
+}
+
+function findPhaseById(phid) {
+  for (const c of state.data.categories)
+    for (const p of c.projects) {
+      const ph = p.phases.find(ph => ph.id === phid);
+      if (ph) return ph;
+    }
+  return null;
+}
+
+// 메모 노드를 실제 단계 노드에 와이어로 연결하면, 그 단계가 리스트뷰상 새 소속이 됨(동시에 두 단계 소속은 불가).
+// 허브·단계-단계·메모-메모 연결은 순수 시각적 연결일 뿐 소속엔 영향 없음.
+function reparentTaskToPhase(taskId, newPhaseId) {
+  const owner = findTaskOwner(taskId);
+  const target = findPhaseById(newPhaseId);
+  if (!owner || !target || owner.phase.id === newPhaseId) return;
+  const [task] = owner.phase.tasks.splice(owner.idx, 1);
+  target.tasks.push(task);
+}
+
 function linkTasks(aId, bId) {
   if (!aId || !bId || aId === bId) return;
   const a = nodemapFind(aId), b = nodemapFind(bId);
   if (!a || !b) return;
   if (!a.links.includes(bId)) a.links.push(bId);
   if (!b.links.includes(aId)) b.links.push(aId);
+  const aKind = nodemapKind(a), bKind = nodemapKind(b);
+  if (aKind === 'task' && bKind === 'phase') reparentTaskToPhase(aId, bId);
+  else if (bKind === 'task' && aKind === 'phase') reparentTaskToPhase(bId, aId);
   commit();
 }
 
@@ -1445,10 +1496,13 @@ function unlinkTasks(aId, bId) {
 function nodemapInlineEdit(titleEl, getValue, setValue) {
   const nodeEl = titleEl.closest('.node');
   if (!nodeEl || nodeEl.classList.contains('editing')) return;
+  // 편집창을 지금 노드(리사이즈된 크기 포함)에 맞춰 채워서, 스티커 메모 칸이 갑자기 작아지지 않게 함
+  const titleRect = titleEl.getBoundingClientRect();
   nodeEl.classList.add('editing');
   const ta = document.createElement('textarea');
   ta.className = 'node-edit-area';
   ta.value = getValue();
+  ta.style.height = Math.max(44, Math.round(titleRect.height)) + 'px';
   titleEl.replaceWith(ta);
   ta.focus();
   ta.select();
@@ -1902,7 +1956,7 @@ function mountNodeCanvas(pid) {
           unlinkTasks(nodemapWireFrom, targetId);
         } else {
           // 할일↔할일/할일↔단계/단계↔단계 구분 없이 전부 개수 제한 없는 자유연결.
-          // (단계 소속 자체를 바꾸고 싶으면 리스트 뷰에서 이동/변경할 것 — 노드맵 연결과는 별개)
+          // 단, 메모↔실제단계 연결은 linkTasks 내부에서 리스트뷰 소속도 그 단계로 옮김(단일 소속 원칙).
           linkTasks(nodemapWireFrom, targetId);
         }
       }
@@ -1918,7 +1972,8 @@ function nodemapUpdateLinesFor(id, x, y) {
   canvas.querySelectorAll(`.node-link[data-b="${CSS.escape(id)}"]`).forEach(l => { l.setAttribute('x2', x); l.setAttribute('y2', y); });
 }
 
-function renderTask(t, pid, phid) {
+function renderTask(t, pid, phid, opts) {
+  const crossLinkFrom = opts && opts.crossLinkFrom; // 다른 단계 소속인데 이 단계 노드와 와이어로 연결돼 함께 표시되는 경우, 원래 소속 단계 이름
   const due = t.due ? renderDue(t.due) : '';
   const memo = t.memo ? `<div class="task-memo">${escapeHtml(t.memo)}</div>` : '';
   const hasSubs = Array.isArray(t.subItems) && t.subItems.length > 0;
@@ -1943,21 +1998,23 @@ function renderTask(t, pid, phid) {
     </form>`;
 
   return `
-    <li class="task ${taskDone ? 'done' : ''} ${hasSubs ? 'has-subs' : ''}" data-task-id="${escapeHtml(t.id)}" draggable="true">
+    <li class="task ${taskDone ? 'done' : ''} ${hasSubs ? 'has-subs' : ''} ${crossLinkFrom ? 'cross-linked' : ''}" data-task-id="${escapeHtml(t.id)}" draggable="${crossLinkFrom ? 'false' : 'true'}">
       <div class="task-main">
         <input type="checkbox" ${taskDone ? 'checked' : ''} data-action="toggle-task" data-task-id="${escapeHtml(t.id)}" ${hasSubs ? 'title="하위 항목 모두 체크/해제"' : ''}>
         <div class="task-body">
           <div class="task-title">
             ${escapeHtml(t.title)}
             ${hasSubs ? `<span class="sub-count">${subsDone}/${t.subItems.length}</span>` : ''}
+            ${crossLinkFrom ? `<span class="cross-link-badge" title="노드맵에서 연결되어 함께 표시됨">🔗 ${escapeHtml(crossLinkFrom)}</span>` : ''}
           </div>
           ${memo}
           ${due}
         </div>
         <div class="task-actions">
           <button class="row-btn" data-action="toggle-subs"     data-task-id="${escapeHtml(t.id)}" title="체크리스트">${hasSubs ? '▾' : '+'}</button>
+          ${crossLinkFrom ? '' : `
           <button class="row-btn" data-action="move-task-up"   data-task-id="${escapeHtml(t.id)}" title="위로">▲</button>
-          <button class="row-btn" data-action="move-task-down" data-task-id="${escapeHtml(t.id)}" title="아래로">▼</button>
+          <button class="row-btn" data-action="move-task-down" data-task-id="${escapeHtml(t.id)}" title="아래로">▼</button>`}
           <button class="row-btn" data-action="edit-task"      data-task-id="${escapeHtml(t.id)}" title="편집">편집</button>
           <button class="row-btn danger" data-action="delete-task" data-task-id="${escapeHtml(t.id)}" title="삭제">삭제</button>
         </div>

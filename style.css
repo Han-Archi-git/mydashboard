@@ -761,6 +761,18 @@ a:hover { color: var(--accent-2); }
   text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
+.cross-linked-list { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.task.cross-linked { opacity: 0.82; }
+.task.cross-linked:hover { background: rgba(56, 189, 248, 0.06); }
+.cross-link-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--accent-2);
+  background: rgba(56, 189, 248, 0.1);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
 .task-memo { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: pre-wrap; }
 .task-due {
   font-size: 11px;
@@ -1078,7 +1090,7 @@ a:hover { color: var(--accent-2); }
 .node-memo { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
 
 .node-edit-area {
-  width: 100%; min-height: 44px; resize: vertical;
+  width: 100%; height: 100%; min-height: 44px; box-sizing: border-box; resize: none; /* 크기 조절은 부모 노드(resize:both)가 담당 */
   background: transparent; color: var(--text); border: 1px solid var(--accent); border-radius: 4px;
   font: inherit; font-size: 13px; padding: 4px; line-height: 1.3;
 }
