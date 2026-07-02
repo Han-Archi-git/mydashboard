@@ -559,6 +559,65 @@ function nodemapDeleteSelected() {
   commit();
 }
 
+// ---------- 노드맵 복사/붙여넣기 ----------
+let nodemapClipboard = null; // [{ kind:'task'|'phase', data, srcPhaseId? }, ...]
+
+function nodemapCopySelected() {
+  if (nodemapSelected.size === 0) return;
+  const items = [];
+  nodemapSelected.forEach(id => {
+    outer: for (const c of state.data.categories)
+      for (const p of c.projects) {
+        const ph = p.phases.find(ph => ph.id === id);
+        if (ph) { items.push({ kind: 'phase', data: JSON.parse(JSON.stringify(ph)) }); break outer; }
+        for (const phx of p.phases) {
+          const t = phx.tasks.find(t => t.id === id);
+          if (t) { items.push({ kind: 'task', data: JSON.parse(JSON.stringify(t)), srcPhaseId: phx.id }); break outer; }
+        }
+      }
+  });
+  if (!items.length) return;
+  nodemapClipboard = items;
+  toast(`${items.length}개 복사됨`);
+}
+
+function nodemapPasteClipboard(pid) {
+  if (!nodemapClipboard || !nodemapClipboard.length) return;
+  const f = findProject(pid);
+  if (!f) return;
+  const OFFSET = 40;
+  let count = 0;
+  nodemapClipboard.forEach(item => {
+    if (item.kind === 'task') {
+      const t = JSON.parse(JSON.stringify(item.data));
+      t.id = uid();
+      t.links = [];
+      if (typeof t.x === 'number') t.x += OFFSET;
+      if (typeof t.y === 'number') t.y += OFFSET;
+      // 원래 있던 단계가 이 프로젝트에 그대로 있으면 거기로, 없으면 "메모" 단계로
+      const targetPh = f.project.phases.find(ph => ph.id === item.srcPhaseId) || ensureMemoPhase(pid);
+      targetPh.tasks.push(t);
+      count++;
+    } else {
+      const ph = JSON.parse(JSON.stringify(item.data));
+      ph.id = uid();
+      ph.links = [];
+      if (typeof ph.x === 'number') ph.x += OFFSET;
+      if (typeof ph.y === 'number') ph.y += OFFSET;
+      ph.tasks = (ph.tasks || []).map(t => {
+        const nt = JSON.parse(JSON.stringify(t));
+        nt.id = uid();
+        nt.links = [];
+        return nt;
+      });
+      f.project.phases.push(ph);
+      count++;
+    }
+  });
+  commit();
+  toast(`${count}개 붙여넣기 완료`);
+}
+
 function commit() {
   state.data.updatedAt = now();
   saveLocal(state.data);
@@ -1245,7 +1304,7 @@ function renderProjectMap(pid) {
     </div>
     <div class="nodemap-toolbar">
       <input id="node-search" class="add-input" placeholder="🔍 메모·제목 검색" autocomplete="off">
-      <div class="field-hint">빈 곳 더블클릭/우클릭 = 새 노드 추가 · 노드 클릭 = 편집 · 노드 우클릭 = 수정·색상·삭제 · 커넥터 드래그 = 연결 · Shift+드래그 = 화면 이동 · Shift+휠 = 확대·축소</div>
+      <div class="field-hint">빈 곳 더블클릭/우클릭 = 새 노드 추가 · 노드 클릭 = 편집 · 노드 우클릭 = 수정·색상·삭제 · 커넥터 드래그 = 연결 · 빈 곳 드래그 = 다중선택 · Del = 선택삭제 · Ctrl+C/V = 복사·붙여넣기 · Ctrl+Z = 실행취소 · Shift+드래그 = 화면 이동 · Shift+휠 = 확대·축소</div>
     </div>
     <div class="nodemap-scroll">
       <div id="node-canvas" class="nodemap-canvas" data-project-id="${escapeHtml(p.id)}" style="width:${canvasSize}px;height:${canvasSize}px">
@@ -1708,6 +1767,16 @@ function mountNodeCanvas(pid) {
       nodemapPanKey = true;
       const se = $('#node-canvas')?.closest('.nodemap-scroll');
       if (se) se.classList.add('pan-ready');
+    }
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return; // 텍스트 입력 중엔 브라우저 기본 복사/붙여넣기에 맡김
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+      if (nodemapSelected.size > 0) { e.preventDefault(); nodemapCopySelected(); }
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      if (nodemapClipboard && nodemapClipboard.length) {
+        const r = currentRoute();
+        if (r.name === 'project' && r.view === 'map') { e.preventDefault(); nodemapPasteClipboard(r.id); }
+      }
     }
   });
   document.addEventListener('keyup', e => {
