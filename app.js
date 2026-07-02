@@ -140,6 +140,7 @@ async function pushGist(data) {
     }
     setSyncStatus('idle');
     clearTimeout(pushRetryTimer);
+    updateLastSaved();
   } catch (e) {
     console.error(e);
     setSyncStatus('error');
@@ -174,6 +175,19 @@ function setSyncStatus(s) {
   el.title = !state.online ? '오프라인' :
     s === 'syncing' ? '동기화 중...' :
     s === 'error'   ? '동기화 오류' : '동기화됨';
+}
+
+let lastSavedAt = null; // Gist에 마지막으로 실제 저장 성공한 시각
+function updateLastSaved() {
+  lastSavedAt = new Date();
+  const el = $('#last-saved');
+  if (el) {
+    const hh = String(lastSavedAt.getHours()).padStart(2, '0');
+    const mm = String(lastSavedAt.getMinutes()).padStart(2, '0');
+    const ss = String(lastSavedAt.getSeconds()).padStart(2, '0');
+    el.textContent = `저장 ${hh}:${mm}:${ss}`;
+    el.title = lastSavedAt.toLocaleString('ko-KR');
+  }
 }
 
 // ---------- Data model ----------
@@ -224,12 +238,16 @@ function ensureSeed(d) {
         if (typeof ph.x !== 'number') ph.x = null;
         if (typeof ph.y !== 'number') ph.y = null;
         if (!Array.isArray(ph.links)) ph.links = [];
-        if (!Array.isArray(ph.links)) ph.links = [];
+        if (typeof ph.color !== 'string') ph.color = null;
+        if (typeof ph.w !== 'number') ph.w = null; // 노드맵 노드 크기(리사이즈) — null이면 기본 크기
+        if (typeof ph.h !== 'number') ph.h = null;
         for (const t of ph.tasks) {
           if (typeof t.x !== 'number') t.x = null;
           if (typeof t.y !== 'number') t.y = null;
           if (!Array.isArray(t.links)) t.links = [];
           if (typeof t.color !== 'string') t.color = null; // 노드맵 색상 — null이면 기본 테마색
+          if (typeof t.w !== 'number') t.w = null; // 노드맵 노드 크기(리사이즈)
+          if (typeof t.h !== 'number') t.h = null;
         }
       }
     }
@@ -1104,7 +1122,6 @@ const NODEMAP_RING_STEP = 100;      // phase→task, 링이 늘어날 때마다 
 const NODEMAP_TASKS_PER_RING = 5;   // 한 링에 들어가는 task 수(넘으면 다음 링으로)
 const NODEMAP_MARGIN = 140;         // 캔버스 여백(노드 크기 감안)
 const NODEMAP_MIN_CANVAS = 20000;   // 캔버스 최소 크기 — 사실상 무한하게 느껴질 만큼 넉넉하게(크기 자체는 성능비용 거의 없음)
-const NODEMAP_CONNECTOR_DIRS = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']; // 8방향 커넥터
 
 // 노드 텍스트를 마크다운으로 렌더 (marked.js + DOMPurify, index.html에서 CDN 로드)
 // marked는 결과 HTML을 새니타이징하지 않으므로 반드시 DOMPurify를 거쳐야 XSS를 막을 수 있음.
@@ -1165,9 +1182,9 @@ function renderProjectMap(pid) {
   // 넉넉한 최소 크기로 캔버스를 잡아 "무제한에 가까운" 자유 배치 공간을 확보 (콘텐츠가 더 크면 그만큼 확장)
   const canvasSize = Math.max(NODEMAP_MIN_CANVAS, maxRadius * 2 + NODEMAP_MARGIN * 2);
   const cx = canvasSize / 2, cy = canvasSize / 2;
-  const connectorsHtml = id => NODEMAP_CONNECTOR_DIRS.map(d =>
-    `<div class="node-connector node-connector-${d}" data-task-id="${escapeHtml(id)}" title="드래그해서 다른 노드와 연결"></div>`
-  ).join('');
+  // 커넥터는 상단(북쪽) 1개만 — 여러 개면 헷갈리고 방해된다는 피드백 반영
+  const connectorsHtml = id =>
+    `<div class="node-connector node-connector-n" data-task-id="${escapeHtml(id)}" title="드래그해서 다른 노드와 연결"></div>`;
 
   const taskNodesHtml = [];
   const allPos = { [p.id]: { x: 0, y: 0 } }; // id(project|task|phase) -> {x,y} — 자유연결선(links) 렌더용 통합 좌표표. 허브는 항상 중심(0,0).
@@ -1181,8 +1198,9 @@ function renderProjectMap(pid) {
       // 단계→할일도 자동으로 선을 긋지 않음 — 배치(위치)로만 소속을 나타내고,
       // 실제로 보이는 선은 전부 사용자가 만든 자유연결(links)뿐이라 클릭/Shift로 항상 지울 수 있음.
       const colorStyle = t.color ? `background:${t.color};` : '';
+      const sizeStyle = (t.w ? `width:${t.w}px;` : '') + (t.h ? `height:${t.h}px;` : '');
       taskNodesHtml.push(`
-        <div class="node ${t.done ? 'done' : ''} ${t.color ? 'colored' : ''}" data-task-id="${escapeHtml(t.id)}" data-search="${escapeHtml((t.title + ' ' + (t.memo || '')).toLowerCase())}" style="left:${cx + tp.x}px;top:${cy + tp.y}px;${colorStyle}">
+        <div class="node ${t.done ? 'done' : ''} ${t.color ? 'colored' : ''}" data-task-id="${escapeHtml(t.id)}" data-search="${escapeHtml((t.title + ' ' + (t.memo || '')).toLowerCase())}" style="left:${cx + tp.x}px;top:${cy + tp.y}px;${colorStyle}${sizeStyle}">
           <div class="node-title" data-task-id="${escapeHtml(t.id)}">${nodemapRenderText(t.title)}</div>
           ${connectorsHtml(t.id)}
         </div>`);
@@ -1191,7 +1209,9 @@ function renderProjectMap(pid) {
 
   const phaseNodesHtml = p.phases.map(ph => {
     const pp = phasePos[ph.id];
-    return `<div class="node phase-node" data-phase-id="${escapeHtml(ph.id)}" data-search="${escapeHtml(ph.name.toLowerCase())}" style="left:${cx + pp.x}px;top:${cy + pp.y}px">
+    const colorStyle = ph.color ? `background:${ph.color};` : '';
+    const sizeStyle = (ph.w ? `width:${ph.w}px;` : '') + (ph.h ? `height:${ph.h}px;` : '');
+    return `<div class="node phase-node ${ph.color ? 'colored' : ''}" data-phase-id="${escapeHtml(ph.id)}" data-search="${escapeHtml(ph.name.toLowerCase())}" style="left:${cx + pp.x}px;top:${cy + pp.y}px;${colorStyle}${sizeStyle}">
       <div class="node-title">${nodemapRenderText(ph.name)}</div>
       ${connectorsHtml(ph.id)}
     </div>`;
@@ -1482,6 +1502,30 @@ function nodemapCenter(canvas) {
   return { cx: parseFloat(canvas.style.width) / 2, cy: parseFloat(canvas.style.height) / 2 };
 }
 
+// 브라우저 네이티브 리사이즈 핸들(우하단 모서리, CSS resize:both)과 커스텀 드래그가 충돌하지 않도록
+// 그 영역에서 시작된 mousedown이면 true를 반환해 드래그를 건너뛰게 한다.
+function nodemapNearResizeHandle(nodeEl, e) {
+  const r = nodeEl.getBoundingClientRect();
+  return (r.right - e.clientX) < 16 && (r.bottom - e.clientY) < 16;
+}
+
+function nodemapSaveSize(nodeEl) {
+  if (!nodeEl.isConnected) return; // 재렌더로 이미 DOM에서 떨어져 나간 요소면 크기가 0으로 잘못 저장되니 건너뜀
+  const w = Math.round(nodeEl.clientWidth), h = Math.round(nodeEl.clientHeight);
+  if (!w || !h) return;
+  if (nodeEl.classList.contains('phase-node')) {
+    const phid = nodeEl.dataset.phaseId;
+    for (const c of state.data.categories)
+      for (const p of c.projects) {
+        const ph = p.phases.find(ph => ph.id === phid);
+        if (ph) { ph.w = w; ph.h = h; commit(); return; }
+      }
+  } else {
+    const t = findTask(nodeEl.dataset.taskId);
+    if (t) { t.w = w; t.h = h; commit(); }
+  }
+}
+
 let nodemapScrollPos = null; // { left, top } — commit()의 전체 재렌더로 스크롤이 리셋되는 것을 막기 위해 기억해둠
 let nodemapZoom = 1;         // Shift+휠로 조절되는 배율, 재렌더 후에도 유지
 const NODEMAP_ZOOM_MIN = 0.3, NODEMAP_ZOOM_MAX = 2.5;
@@ -1514,6 +1558,17 @@ function mountNodeCanvas(pid) {
 
   if (scrollEl) scrollEl.classList.toggle('pan-ready', nodemapPanKey);
 
+  // 네이티브 리사이즈(모서리 드래그)로 크기가 바뀌면 debounce 후 저장
+  const resizeTimers = new WeakMap();
+  const ro = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const el = entry.target;
+      clearTimeout(resizeTimers.get(el));
+      resizeTimers.set(el, setTimeout(() => nodemapSaveSize(el), 500));
+    }
+  });
+  canvas.querySelectorAll('.node[data-task-id], .node.phase-node').forEach(el => ro.observe(el));
+
   canvas.addEventListener('mousedown', e => {
     const connector = e.target.closest('.node-connector');
     const nodeEl = e.target.closest('.node');
@@ -1538,7 +1593,7 @@ function mountNodeCanvas(pid) {
       nodemapTempLine.setAttribute('x1', cx); nodemapTempLine.setAttribute('y1', cy);
       nodemapTempLine.setAttribute('x2', cx); nodemapTempLine.setAttribute('y2', cy);
       svg.appendChild(nodemapTempLine);
-    } else if (nodeEl && !nodeEl.classList.contains('hub-node') && !nodeEl.classList.contains('editing')) {
+    } else if (nodeEl && !nodeEl.classList.contains('hub-node') && !nodeEl.classList.contains('editing') && !nodemapNearResizeHandle(nodeEl, e)) {
       // 주의: 여기서 preventDefault()를 호출하면 일부 브라우저/자동화 환경에서
       // 뒤이은 click 이벤트가 억제된다(드래그 없는 순수 클릭 시 인라인 편집이 안 열림).
       // 텍스트 선택 방지는 CSS user-select:none으로 대신 처리(.node 규칙).
@@ -2271,6 +2326,16 @@ async function init() {
   startLiveClock();
   render();
   historyPush(); // 실행취소 기준점
+  if (state.data.updatedAt) {
+    lastSavedAt = new Date(state.data.updatedAt);
+    const el = $('#last-saved');
+    if (el) {
+      const hh = String(lastSavedAt.getHours()).padStart(2, '0');
+      const mm = String(lastSavedAt.getMinutes()).padStart(2, '0');
+      el.textContent = `저장 ${hh}:${mm}`;
+      el.title = lastSavedAt.toLocaleString('ko-KR');
+    }
+  }
 
   if (!loadPat() || !loadGistId()) {
     showAuthModal();
