@@ -459,10 +459,79 @@ function activePhaseIdx(project) {
   return -1;
 }
 
+// ---------- 실행취소/다시실행 (전체 앱 공용) ----------
+let historyStack = [];   // JSON 스냅샷 목록, 오래된 것→최신 순
+let historyIndex = -1;   // historyStack 중 현재 위치
+const HISTORY_LIMIT = 50;
+
+function historyPush() {
+  const snap = JSON.stringify(state.data);
+  historyStack = historyStack.slice(0, historyIndex + 1);
+  historyStack.push(snap);
+  if (historyStack.length > HISTORY_LIMIT) historyStack.shift();
+  historyIndex = historyStack.length - 1;
+}
+
+function historyRestore(idx) {
+  if (idx < 0 || idx >= historyStack.length) return;
+  historyIndex = idx;
+  state.data = JSON.parse(historyStack[idx]);
+  saveLocal(state.data);
+  schedulePush();
+  render();
+}
+
+function historyUndo() { if (historyIndex > 0) historyRestore(historyIndex - 1); }
+function historyRedo() { if (historyIndex < historyStack.length - 1) historyRestore(historyIndex + 1); }
+
+document.addEventListener('keydown', e => {
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return; // 텍스트 입력 중엔 브라우저 기본 동작(실행취소 포함)에 맡김
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === 'z' || e.key === 'Z') {
+      e.preventDefault();
+      if (e.shiftKey) historyRedo(); else historyUndo();
+    } else if (e.key === 'y' || e.key === 'Y') {
+      e.preventDefault();
+      historyRedo();
+    }
+    return;
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && nodemapSelected.size > 0) {
+    e.preventDefault();
+    nodemapDeleteSelected();
+  }
+});
+
+function nodemapDeleteSelected() {
+  const ids = [...nodemapSelected];
+  if (!ids.length) return;
+  if (!confirm(`선택한 노드 ${ids.length}개를 삭제할까요?`)) return;
+  ids.forEach(id => {
+    let removed = false;
+    for (const c of state.data.categories)
+      for (const p of c.projects) {
+        const phIdx = p.phases.findIndex(ph => ph.id === id);
+        if (phIdx !== -1) { p.phases.splice(phIdx, 1); removed = true; }
+      }
+    if (!removed) {
+      for (const c of state.data.categories)
+        for (const p of c.projects)
+          for (const ph of p.phases) {
+            const tIdx = ph.tasks.findIndex(t => t.id === id);
+            if (tIdx !== -1) { ph.tasks.splice(tIdx, 1); removed = true; }
+          }
+    }
+  });
+  nodemapSelected.clear();
+  commit();
+}
+
 function commit() {
   state.data.updatedAt = now();
   saveLocal(state.data);
   schedulePush();
+  historyPush();
   render();
 }
 
@@ -1390,6 +1459,9 @@ let nodemapTempLine = null;
 let nodemapBound = false;
 let nodemapPanKey = false; // Shift 누르고 있는 동안 true — 손바닥 커서로 캔버스 자유 이동
 let nodemapPan = null;     // { scrollEl, startX, startY, startLeft, startTop }
+let nodemapSelected = new Set(); // 마퀴 다중선택된 task/phase id
+let nodemapMarquee = null;       // { startX, startY, box }
+let nodemapGroupDrag = null;     // { items:[{kind,id,el,origLeft,origTop}], startX, startY, moved }
 const NODEMAP_CLICK_THRESHOLD = 4; // px — 이보다 적게 움직이면 드래그가 아니라 클릭으로 취급
 
 function nodemapCenter(canvas) {
@@ -1457,15 +1529,38 @@ function mountNodeCanvas(pid) {
       // 뒤이은 click 이벤트가 억제된다(드래그 없는 순수 클릭 시 인라인 편집이 안 열림).
       // 텍스트 선택 방지는 CSS user-select:none으로 대신 처리(.node 규칙).
       const isPhase = nodeEl.classList.contains('phase-node');
-      nodemapDrag = {
-        kind: isPhase ? 'phase' : 'task',
-        id: isPhase ? nodeEl.dataset.phaseId : nodeEl.dataset.taskId,
-        el: nodeEl,
-        startX: e.clientX, startY: e.clientY,
-        origLeft: parseFloat(nodeEl.style.left), origTop: parseFloat(nodeEl.style.top),
-        moved: false,
-      };
-      nodeEl.classList.add('dragging');
+      const id = isPhase ? nodeEl.dataset.phaseId : nodeEl.dataset.taskId;
+      if (nodemapSelected.size > 1 && nodemapSelected.has(id)) {
+        // 선택된 노드가 여럿이고 그중 하나를 끄는 경우 → 선택된 전체를 같이 이동
+        const items = [...nodemapSelected].map(sid => {
+          const el2 = canvas.querySelector(`.node[data-task-id="${CSS.escape(sid)}"], .node.phase-node[data-phase-id="${CSS.escape(sid)}"]`);
+          if (!el2) return null;
+          return { kind: el2.classList.contains('phase-node') ? 'phase' : 'task', id: sid, el: el2, origLeft: parseFloat(el2.style.left), origTop: parseFloat(el2.style.top) };
+        }).filter(Boolean);
+        nodemapGroupDrag = { items, startX: e.clientX, startY: e.clientY, moved: false };
+        items.forEach(it => it.el.classList.add('dragging'));
+      } else {
+        nodemapDrag = {
+          kind: isPhase ? 'phase' : 'task',
+          id,
+          el: nodeEl,
+          startX: e.clientX, startY: e.clientY,
+          origLeft: parseFloat(nodeEl.style.left), origTop: parseFloat(nodeEl.style.top),
+          moved: false,
+        };
+        nodeEl.classList.add('dragging');
+      }
+    } else if (!nodeEl && !linkEl) {
+      // 빈 캔버스 드래그 = 마퀴 다중선택 시작
+      nodemapSelected.forEach(sid => {
+        const el2 = canvas.querySelector(`.node[data-task-id="${CSS.escape(sid)}"], .node.phase-node[data-phase-id="${CSS.escape(sid)}"]`);
+        if (el2) el2.classList.remove('selected');
+      });
+      nodemapSelected.clear();
+      const box = document.createElement('div');
+      box.className = 'nodemap-marquee';
+      document.body.appendChild(box);
+      nodemapMarquee = { startX: e.clientX, startY: e.clientY, box };
     }
   });
 
@@ -1568,6 +1663,33 @@ function mountNodeCanvas(pid) {
       nodemapPan.scrollEl.scrollTop = nodemapPan.startTop - (e.clientY - nodemapPan.startY);
       return;
     }
+    if (nodemapMarquee) {
+      const x1 = Math.min(nodemapMarquee.startX, e.clientX), x2 = Math.max(nodemapMarquee.startX, e.clientX);
+      const y1 = Math.min(nodemapMarquee.startY, e.clientY), y2 = Math.max(nodemapMarquee.startY, e.clientY);
+      Object.assign(nodemapMarquee.box.style, { left: x1 + 'px', top: y1 + 'px', width: (x2 - x1) + 'px', height: (y2 - y1) + 'px' });
+      const c = $('#node-canvas');
+      if (c) {
+        c.querySelectorAll('.node:not(.hub-node)').forEach(el => {
+          const r = el.getBoundingClientRect();
+          const id = el.dataset.taskId || el.dataset.phaseId;
+          const intersects = r.left < x2 && r.right > x1 && r.top < y2 && r.bottom > y1;
+          if (intersects) { nodemapSelected.add(id); el.classList.add('selected'); }
+          else { nodemapSelected.delete(id); el.classList.remove('selected'); }
+        });
+      }
+      return;
+    }
+    if (nodemapGroupDrag) {
+      const dx = (e.clientX - nodemapGroupDrag.startX) / nodemapZoom, dy = (e.clientY - nodemapGroupDrag.startY) / nodemapZoom;
+      if (Math.abs(dx) > NODEMAP_CLICK_THRESHOLD || Math.abs(dy) > NODEMAP_CLICK_THRESHOLD) nodemapGroupDrag.moved = true;
+      nodemapGroupDrag.items.forEach(it => {
+        const nx = it.origLeft + dx, ny = it.origTop + dy;
+        it.el.style.left = nx + 'px';
+        it.el.style.top = ny + 'px';
+        nodemapUpdateLinesFor(it.id, nx, ny);
+      });
+      return;
+    }
     if (nodemapDrag) {
       // 화면(줌 반영) 픽셀 이동량을 캔버스 내부 논리좌표 이동량으로 환산
       const dx = (e.clientX - nodemapDrag.startX) / nodemapZoom, dy = (e.clientY - nodemapDrag.startY) / nodemapZoom;
@@ -1589,6 +1711,35 @@ function mountNodeCanvas(pid) {
     if (nodemapPan) {
       nodemapPan.scrollEl.classList.remove('panning');
       nodemapPan = null;
+      return;
+    }
+    if (nodemapMarquee) {
+      nodemapMarquee.box.remove();
+      nodemapMarquee = null;
+      return;
+    }
+    if (nodemapGroupDrag) {
+      const c = $('#node-canvas');
+      const { cx, cy } = c ? nodemapCenter(c) : { cx: 0, cy: 0 };
+      nodemapGroupDrag.items.forEach(it => it.el.classList.remove('dragging'));
+      if (nodemapGroupDrag.moved) {
+        nodemapGroupDrag.items.forEach(it => {
+          const nx = parseFloat(it.el.style.left), ny = parseFloat(it.el.style.top);
+          const relX = nx - cx, relY = ny - cy;
+          if (it.kind === 'phase') {
+            outer: for (const cat of state.data.categories)
+              for (const p of cat.projects) {
+                const ph = p.phases.find(ph => ph.id === it.id);
+                if (ph) { ph.x = relX; ph.y = relY; break outer; }
+              }
+          } else {
+            const t = findTask(it.id);
+            if (t) { t.x = relX; t.y = relY; }
+          }
+        });
+        commit(); // 그룹 전체를 한 번에 커밋(각 아이템마다 재렌더되는 것 방지)
+      }
+      nodemapGroupDrag = null;
       return;
     }
     if (nodemapDrag) {
@@ -2106,6 +2257,7 @@ async function init() {
   state.data = ensureSeed(loadLocal());
   startLiveClock();
   render();
+  historyPush(); // 실행취소 기준점
 
   if (!loadPat() || !loadGistId()) {
     showAuthModal();
@@ -2120,6 +2272,7 @@ async function init() {
       state.data = ensureSeed(remote);
       saveLocal(state.data);
       render();
+      historyPush(); // 원격 데이터로 갱신된 시점을 새 실행취소 기준점으로
       if (state.data.version > prevVersion) {
         await pushGist(state.data);
         toast('카테고리 업데이트 완료');

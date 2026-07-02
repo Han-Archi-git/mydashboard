@@ -1029,6 +1029,12 @@ a:hover { color: var(--accent-2); }
 .node.colored { border-color: rgba(15, 23, 42, 0.25); }
 .node.colored .node-title, .node.colored .node-title p { color: #1e293b; }
 .node.match { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.node.selected { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.5); }
+
+.nodemap-marquee {
+  position: fixed; z-index: 40; pointer-events: none;
+  background: rgba(56, 189, 248, 0.12); border: 1px solid var(--accent);
+}
 .node.current-match { box-shadow: 0 0 0 2px var(--accent), var(--glow); }
 .node.dim { opacity: 0.25; }
 .node.editing { z-index: 6; cursor: text; }
