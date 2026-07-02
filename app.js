@@ -1096,6 +1096,7 @@ async function connectAndSync() {
     if (remote && remote.categories) {
       state.data = ensureSeed(remote);
       saveLocal(state.data);
+      setSyncStatus('idle');
     } else {
       state.data = ensureSeed(state.data || freshData());
       saveLocal(state.data);
