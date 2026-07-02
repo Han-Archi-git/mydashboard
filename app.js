@@ -1090,7 +1090,7 @@ const NODEMAP_PHASE_RADIUS = 170;   // 중심→phase 거리
 const NODEMAP_RING_STEP = 100;      // phase→task, 링이 늘어날 때마다 반지름 증가폭
 const NODEMAP_TASKS_PER_RING = 5;   // 한 링에 들어가는 task 수(넘으면 다음 링으로)
 const NODEMAP_MARGIN = 140;         // 캔버스 여백(노드 크기 감안)
-const NODEMAP_MIN_CANVAS = 2200;    // 캔버스 최소 크기 — 넉넉하게 잡아 사실상 자유롭게 배치 가능하게
+const NODEMAP_MIN_CANVAS = 6000;    // 캔버스 최소 크기 — 사실상 무한하게 느껴질 만큼 넉넉하게
 const NODEMAP_CONNECTOR_DIRS = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']; // 8방향 커넥터
 
 // 노드 텍스트를 마크다운으로 렌더 (marked.js + DOMPurify, index.html에서 CDN 로드)
