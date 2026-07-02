@@ -161,6 +161,10 @@ a:hover { color: var(--accent-2); }
   margin: 0 auto;
   padding: 24px 24px 80px;
 }
+.app.app-fullbleed {
+  max-width: none;
+  padding: 16px 16px 16px;
+}
 
 /* ============================================================
    Overview section (홈 상단 그리드)
@@ -991,24 +995,28 @@ a:hover { color: var(--accent-2); }
 .nodemap-toolbar { margin-bottom: 12px; }
 .nodemap-toolbar .add-input { max-width: 320px; }
 
-.nodemap-scroll { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-0); }
-.nodemap-canvas { position: relative; }
-
-.nodemap-spine {
-  position: absolute; top: 0; width: 1px;
-  background: linear-gradient(180deg, transparent, var(--mono-line-2) 8%, var(--mono-line-2) 92%, transparent);
+.nodemap-scroll {
+  overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-0);
+  height: calc(100vh - 200px);
+  scrollbar-width: none; -ms-overflow-style: none; /* Firefox / IE: 스크롤바 숨김(패닝으로 자유 이동) */
 }
+.nodemap-scroll::-webkit-scrollbar { display: none; } /* Chrome/Safari: 스크롤바 숨김 */
+.nodemap-scroll.pan-ready { cursor: grab; }
+.nodemap-scroll.pan-ready.panning { cursor: grabbing; }
+.nodemap-canvas { position: relative; min-width: 100%; min-height: 100%; transform-origin: 0 0; }
 
 .nodemap-lines { position: absolute; top: 0; left: 0; pointer-events: none; }
-.node-link { stroke: var(--mono-line); stroke-width: 1; pointer-events: stroke; cursor: pointer; }
+.node-hubline { stroke: var(--mono-line); stroke-width: 1; opacity: 0.5; pointer-events: none; } /* 순수 장식선 — 클릭/삭제 대상 아님 */
+.node-link { stroke: var(--mono-line-2); stroke-width: 1.2; pointer-events: stroke; cursor: pointer; }
 .node-link:hover { stroke: var(--danger); }
 .node-link-temp { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.node-link-temp.unlink { stroke: var(--danger); }
 
 .node {
   position: absolute;
   transform: translate(-50%, -50%);
-  width: 168px;
-  padding: 10px 12px;
+  width: 150px;
+  padding: 9px 11px;
   background: var(--mono-node-bg);
   border: 1px solid var(--mono-line-2);
   border-radius: var(--radius-sm);
@@ -1018,17 +1026,84 @@ a:hover { color: var(--accent-2); }
 .node:hover { border-color: var(--text-dim); }
 .node.dragging { cursor: grabbing; box-shadow: var(--glow); z-index: 5; }
 .node.done { opacity: 0.55; }
+.node.colored { border-color: rgba(15, 23, 42, 0.25); }
+.node.colored .node-title, .node.colored .node-title p { color: #1e293b; }
 .node.match { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.node.current-match { box-shadow: 0 0 0 2px var(--accent), var(--glow); }
 .node.dim { opacity: 0.25; }
+.node.editing { z-index: 6; cursor: text; }
 
-.node-phase { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
-.node-title { font-size: 13px; color: var(--text); line-height: 1.3; }
+.node.hub-node {
+  width: 120px; height: 120px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  background: var(--surface-2); border: 1px solid var(--accent); box-shadow: var(--glow-soft);
+  cursor: text;
+}
+.node.hub-node .node-title { font-size: 14px; font-weight: 600; }
+.node.hub-node.colored { border-color: rgba(15, 23, 42, 0.25); box-shadow: none; }
+
+.node.phase-node {
+  width: 120px; border-radius: 999px; text-align: center;
+  background: var(--surface-2); border-color: var(--mono-line-2);
+}
+.node.phase-node .node-title { font-size: 12px; font-weight: 600; }
+
+.node-title { font-size: 13px; color: var(--text); line-height: 1.3; min-height: 1.3em; cursor: text; }
 .node-memo { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.3; }
 
-.node-connector {
-  position: absolute; right: -6px; top: 50%; transform: translateY(-50%);
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--bg-0); border: 1px solid var(--mono-line-2);
-  cursor: crosshair;
+.node-edit-area {
+  width: 100%; min-height: 44px; resize: vertical;
+  background: transparent; color: var(--text); border: 1px solid var(--accent); border-radius: 4px;
+  font: inherit; font-size: 13px; padding: 4px; line-height: 1.3;
 }
-.node-connector:hover { border-color: var(--accent); background: var(--accent); }
+/* 색상 지정된 노드(밝은 파스텔 배경)는 편집창 글자도 어둡게 — 흰 글씨가 밝은 배경에 묻히는 문제 방지 */
+.node.colored .node-edit-area { color: #1e293b; }
+
+/* 8방향 커넥터 — 히트 영역을 넉넉히 키워서(::before) 마우스로 잡기 쉽게 함 */
+.node-connector {
+  position: absolute; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--bg-0); border: 1.5px solid var(--mono-line-2);
+  cursor: crosshair; z-index: 3;
+  opacity: 0.28; /* 평소엔 눈에 덜 띄게, 클릭 가능 영역은 그대로 유지(::before) */
+  transition: opacity 0.12s;
+}
+.node-connector::before {
+  content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 22px; height: 22px; /* 실제 클릭 가능 영역: 시각적 점보다 훨씬 크게 */
+}
+.node:hover .node-connector { opacity: 0.7; }
+.node-connector:hover { opacity: 1; border-color: var(--accent); background: var(--accent); transform: scale(1.3); }
+
+.node-connector-n  { top: -6px;  left: 50%; transform: translate(-50%, 0); }
+.node-connector-s  { bottom: -6px; left: 50%; transform: translate(-50%, 0); }
+.node-connector-e  { right: -6px; top: 50%; transform: translate(0, -50%); }
+.node-connector-w  { left: -6px; top: 50%; transform: translate(0, -50%); }
+.node-connector-ne { top: -6px; right: -6px; }
+.node-connector-nw { top: -6px; left: -6px; }
+.node-connector-se { bottom: -6px; right: -6px; }
+.node-connector-sw { bottom: -6px; left: -6px; }
+.node-connector-n:hover, .node-connector-s:hover  { transform: translate(-50%, 0) scale(1.3); }
+.node-connector-e:hover, .node-connector-w:hover  { transform: translate(0, -50%) scale(1.3); }
+
+.nodemap-ctxmenu {
+  position: fixed; z-index: 50;
+  background: var(--surface-2); border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; min-width: 96px;
+}
+.nodemap-ctxmenu button {
+  background: none; border: none; color: var(--text); text-align: left;
+  padding: 8px 12px; font-size: 13px; cursor: pointer;
+}
+.nodemap-ctxmenu button:hover { background: var(--surface-3); }
+.nodemap-ctxmenu button.danger { color: var(--danger); }
+
+.nodemap-colorpicker {
+  position: fixed; z-index: 50; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow); padding: 8px;
+}
+.cp-swatch {
+  width: 22px; height: 22px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.25); cursor: pointer; padding: 0;
+}
+.cp-swatch:hover { transform: scale(1.15); }
+.cp-swatch.cp-default { background: var(--mono-node-bg); border: 1px dashed var(--mono-line-2); }
