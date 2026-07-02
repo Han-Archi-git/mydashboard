@@ -203,6 +203,7 @@ function ensureSeed(d) {
     c.projects = Array.isArray(c.projects) ? c.projects : [];
     for (const p of c.projects) {
       if (typeof p.color !== 'string') p.color = null; // 노드맵 허브 색상
+      if (!Array.isArray(p.links)) p.links = [];       // 노드맵 허브 자유연결
       p.phases = Array.isArray(p.phases) ? p.phases : [];
       for (const ph of p.phases) {
         ph.tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
@@ -1156,13 +1157,11 @@ function renderProjectMap(pid) {
   ).join('');
 
   const taskNodesHtml = [];
-  const allPos = {}; // id(task|phase) -> {x,y} — 자유연결선(links) 렌더용 통합 좌표표
-  const hubLinesHtml = [];
+  const allPos = { [p.id]: { x: 0, y: 0 } }; // id(project|task|phase) -> {x,y} — 자유연결선(links) 렌더용 통합 좌표표. 허브는 항상 중심(0,0).
   p.phases.forEach(ph => {
     const pp = phasePos[ph.id];
     allPos[ph.id] = pp;
-    // 허브↔단계는 실제 연결 데이터가 아니라 순수 장식선(클릭/삭제 대상 아님) — 모양만 잡아줌
-    hubLinesHtml.push(`<line class="node-hubline" data-hub-phase="${escapeHtml(ph.id)}" x1="${cx}" y1="${cy}" x2="${cx + pp.x}" y2="${cy + pp.y}"/>`);
+    // 허브↔단계는 자동으로 선을 긋지 않음 — 필요하면 허브 커넥터로 직접 연결(다른 노드와 완전히 동일하게 취급).
     ph.tasks.forEach(t => {
       const tp = taskPos[t.id];
       allPos[t.id] = tp;
@@ -1185,7 +1184,7 @@ function renderProjectMap(pid) {
     </div>`;
   }).join('');
 
-  const allLinkables = [];
+  const allLinkables = [p];
   p.phases.forEach(ph => { allLinkables.push(ph); ph.tasks.forEach(t => allLinkables.push(t)); });
   const drawn = new Set();
   const linkLinesHtml = allLinkables.flatMap(node =>
@@ -1217,9 +1216,10 @@ function renderProjectMap(pid) {
     </div>
     <div class="nodemap-scroll">
       <div id="node-canvas" class="nodemap-canvas" data-project-id="${escapeHtml(p.id)}" style="width:${canvasSize}px;height:${canvasSize}px">
-        <svg class="nodemap-lines" width="${canvasSize}" height="${canvasSize}">${hubLinesHtml.join('')}${linkLinesHtml}</svg>
-        <div class="node hub-node ${p.color ? 'colored' : ''}" style="left:${cx}px;top:${cy}px;${p.color ? `background:${p.color};` : ''}">
+        <svg class="nodemap-lines" width="${canvasSize}" height="${canvasSize}">${linkLinesHtml}</svg>
+        <div class="node hub-node ${p.color ? 'colored' : ''}" data-hub-id="${escapeHtml(p.id)}" style="left:${cx}px;top:${cy}px;${p.color ? `background:${p.color};` : ''}">
           <div class="node-title">${escapeHtml(p.name)}</div>
+          ${connectorsHtml(p.id)}
         </div>
         ${phaseNodesHtml}
         ${taskNodesHtml.join('') || ''}
@@ -1324,6 +1324,7 @@ function nodemapFind(id) {
   if (t) return t;
   for (const c of state.data.categories)
     for (const p of c.projects) {
+      if (p.id === id) return p; // 허브(프로젝트) 자신
       const ph = p.phases.find(ph => ph.id === id);
       if (ph) return ph;
     }
@@ -1755,7 +1756,7 @@ function mountNodeCanvas(pid) {
     } else if (nodemapWireFrom) {
       const targetEl = e.target.closest('.node');
       if (nodemapTempLine) nodemapTempLine.remove();
-      const targetId = targetEl && (targetEl.dataset.taskId || targetEl.dataset.phaseId);
+      const targetId = targetEl && (targetEl.dataset.taskId || targetEl.dataset.phaseId || targetEl.dataset.hubId);
       if (targetId && targetId !== nodemapWireFrom) {
         if (nodemapWireShiftMode) {
           // Shift 누른 채 커넥터 드래그 → 연결 해제
@@ -1776,7 +1777,6 @@ function nodemapUpdateLinesFor(id, x, y) {
   if (!canvas) return;
   canvas.querySelectorAll(`.node-link[data-a="${CSS.escape(id)}"]`).forEach(l => { l.setAttribute('x1', x); l.setAttribute('y1', y); });
   canvas.querySelectorAll(`.node-link[data-b="${CSS.escape(id)}"]`).forEach(l => { l.setAttribute('x2', x); l.setAttribute('y2', y); });
-  canvas.querySelectorAll(`.node-hubline[data-hub-phase="${CSS.escape(id)}"]`).forEach(l => { l.setAttribute('x2', x); l.setAttribute('y2', y); });
 }
 
 function renderTask(t, pid, phid) {
