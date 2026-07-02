@@ -37,18 +37,18 @@ https://gist.github.com/ 접속 → 파일명 `data.json`, 내용은 비워둬�
 
 ### 4) Personal Access Token (PAT) 발급
 
-https://github.com/settings/tokens?type=beta (Fine-grained tokens)
+https://github.com/settings/tokens (Classic tokens) — **Fine-grained 말고 Classic으로 발급**
 
-- **Token name**: mydashboard
-- **Expiration**: 1년
-- **Resource owner**: 본인
-- **Repository access**: Public repositories 가능 (Gist는 별개)
-- **Account permissions** → **Gists**: `Read and write`
+- **Note**: mydashboard
+- **Expiration**: **No expiration** (무기한 — 만료로 인한 재발급/재로그인 반복을 막기 위함)
+- **Scopes**: `gist` 만 체크
 - Generate token → 토큰 복사 (한 번만 표시됨)
 
 ### 5) 사이트 접속 + 연결
 
 Pages URL을 PC/모바일 브라우저에서 열면 연결 모달이 뜸. PAT와 Gist ID 입력 → 저장.
+
+**이 입력은 기기(브라우저)별로 1회씩 필요함** — 정적 사이트라 서버가 따로 없고, 각 브라우저가 자기 로컬에 PAT를 들고 있는 구조. 새 기기/브라우저를 쓸 때마다 같은 PAT + Gist ID를 다시 입력하면 됨.
 
 이후 체크박스를 누를 때마다 Gist에 자동 저장되고, 다른 기기에서도 5초 이내에 반영됨.
 
@@ -92,6 +92,7 @@ Pages URL을 PC/모바일 브라우저에서 열면 연결 모달이 뜸. PAT와
 
 ## 트러블슈팅
 
-- **동기화 표시등(우상단 점)이 빨강**: PAT 만료/오타거나 Gist ID 오타. 설정 → 재연결.
+- **동기화 표시등(우상단 점)이 빨강**: PAT 만료/폐기/오타거나 Gist ID 오타. 설정 → 재연결 → PAT/Gist ID 재입력.
 - **다른 기기에 안 보임**: 5초 폴링 기다리거나 페이지 새로고침. 둘 다 같은 Gist를 가리키는지 확인.
 - **충돌**: 두 기기에서 동시 수정 시 마지막 푸시가 이김. 동시 편집은 피할 것.
+- **토큰을 재발급했는데 로그인이 안 됨**: 이 앱은 비밀번호 금고 없이 순수 PAT 직접입력 방식임 — 새 토큰을 만들면 **로컬 `.env`(CLI/스킬용)와 접속 중인 모든 기기의 브라우저(설정 → 재연결)**, 이 두 군데를 모두 새 토큰으로 갱신해야 함. 한 군데라도 빠뜨리면 그 경로만 옛 토큰으로 401이 남.
