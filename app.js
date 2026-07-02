@@ -6,7 +6,7 @@ const PAT_KEY = 'mydashboard_pat';
 const GIST_KEY = 'mydashboard_gist_id';
 const DATA_KEY = 'mydashboard_data';
 const POLL_MS = 5000;
-const PUSH_DEBOUNCE = 1500;
+const PUSH_DEBOUNCE = 2500; // 노드맵에서 짧은 간격으로 연속 조작할 때 저장 요청이 몰려 GitHub rate limit에 걸리는 것을 줄이기 위해 늘림
 const DATA_FILENAME = 'data.json';
 
 const SEED_CATEGORIES = [
@@ -117,6 +117,7 @@ async function fetchGistAtVersion(version) {
   try { return JSON.parse(file.content); } catch { return null; }
 }
 
+let pushRetryTimer = null;
 async function pushGist(data) {
   const pat = loadPat(), gistId = loadGistId();
   if (!pat || !gistId) return;
@@ -133,12 +134,24 @@ async function pushGist(data) {
         files: { [DATA_FILENAME]: { content: JSON.stringify(data, null, 2) } }
       })
     });
-    if (!res.ok) throw new Error(`저장 실패 (${res.status})`);
+    if (!res.ok) {
+      const isRateLimit = res.status === 403 || res.status === 429;
+      throw Object.assign(new Error(`저장 실패 (${res.status})`), { isRateLimit });
+    }
     setSyncStatus('idle');
+    clearTimeout(pushRetryTimer);
   } catch (e) {
     console.error(e);
     setSyncStatus('error');
-    toast('저장 실패 — 인터넷/토큰 확인');
+    if (e.isRateLimit) {
+      // 짧은 시간에 저장 요청이 몰려 GitHub가 일시적으로 막은 경우 — 데이터는 로컬에 남아있으니
+      // 조용히 잠시 후 자동 재시도(반복 토스트로 방해하지 않음)
+      clearTimeout(pushRetryTimer);
+      pushRetryTimer = setTimeout(() => pushGist(state.data), 20000);
+      toast('저장 요청이 몰려 잠시 지연됩니다 — 곧 자동으로 다시 시도합니다 (데이터는 유지됨)', 3000);
+    } else {
+      toast('저장 실패 — 인터넷/토큰 확인');
+    }
   }
 }
 
