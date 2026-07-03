@@ -1517,18 +1517,21 @@ function unlinkTasks(aId, bId) {
 function nodemapInlineEdit(titleEl, getValue, setValue) {
   const nodeEl = titleEl.closest('.node');
   if (!nodeEl || nodeEl.classList.contains('editing')) return;
-  // 편집창을 지금 노드(리사이즈된 크기 포함)에 맞춰 채워서, 스티커 메모 칸이 갑자기 작아지지 않게 함
-  const titleRect = titleEl.getBoundingClientRect();
+  // 윈도우 스티커메모처럼: 입력에 맞춰 노드가 세로로 자동 확장, 안쪽 스크롤바 없음.
+  const origHeight = nodeEl.style.height; // 취소 시 되돌리기 위해 기존(리사이즈된) 높이 기억
   nodeEl.classList.add('editing');
+  nodeEl.style.height = 'auto'; // 편집 중엔 고정 높이 해제 → 내용만큼 늘어남
   const ta = document.createElement('textarea');
   ta.className = 'node-edit-area';
   ta.value = getValue();
-  ta.style.height = Math.max(44, Math.round(titleRect.height)) + 'px';
   titleEl.replaceWith(ta);
+  const autoGrow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
   ta.focus();
   ta.select();
+  autoGrow(); // 처음 열 때 기존 내용 전체가 보이도록 높이 맞춤
+  ta.addEventListener('input', autoGrow); // 타이핑할 때마다 늘어남
   let done = false;
-  const cancel = () => { if (done) return; done = true; ta.replaceWith(titleEl); nodeEl.classList.remove('editing'); };
+  const cancel = () => { if (done) return; done = true; ta.replaceWith(titleEl); nodeEl.classList.remove('editing'); nodeEl.style.height = origHeight; };
   const save = () => {
     if (done) return; done = true;
     const val = ta.value.trim();
