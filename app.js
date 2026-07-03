@@ -1517,31 +1517,80 @@ function unlinkTasks(aId, bId) {
 function nodemapInlineEdit(titleEl, getValue, setValue) {
   const nodeEl = titleEl.closest('.node');
   if (!nodeEl || nodeEl.classList.contains('editing')) return;
-  // 윈도우 스티커메모처럼: 입력에 맞춰 노드가 세로로 자동 확장, 안쪽 스크롤바 없음.
-  const origHeight = nodeEl.style.height; // 취소 시 되돌리기 위해 기존(리사이즈된) 높이 기억
+  // 윈도우 스티커메모처럼: 입력에 맞춰 세로 자동확장(스크롤 없음) + 서식 툴바(메모 노드).
+  const isMemo = !!nodeEl.dataset.taskId; // 할일(메모) 노드만 툴바·안내문 부여. 단계/허브는 짧은 이름이라 제외
+  const origHeight = nodeEl.style.height;  // 취소 시 되돌릴 기존(리사이즈된) 높이
   nodeEl.classList.add('editing');
-  nodeEl.style.height = 'auto'; // 편집 중엔 고정 높이 해제 → 내용만큼 늘어남
+  nodeEl.style.height = 'auto';            // 편집 중엔 고정 높이 해제 → 내용만큼 늘어남
+
+  const wrap = document.createElement('div');
+  wrap.className = 'node-editor';
   const ta = document.createElement('textarea');
   ta.className = 'node-edit-area';
   ta.value = getValue();
-  titleEl.replaceWith(ta);
+  if (isMemo) ta.placeholder = '메모를 작성하세요…';
+  wrap.appendChild(ta);
+
+  let bar = null;
+  if (isMemo) {
+    bar = document.createElement('div');
+    bar.className = 'node-edit-toolbar';
+    bar.innerHTML =
+      '<button type="button" data-fmt="bold" title="굵게"><b>B</b></button>' +
+      '<button type="button" data-fmt="italic" title="기울임"><i>I</i></button>' +
+      '<button type="button" data-fmt="underline" title="밑줄"><span style="text-decoration:underline">U</span></button>' +
+      '<button type="button" data-fmt="strike" title="취소선"><span style="text-decoration:line-through">S</span></button>' +
+      '<button type="button" data-fmt="list" title="목록">≣</button>';
+    wrap.appendChild(bar);
+  }
+  titleEl.replaceWith(wrap);
+
   const autoGrow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
   ta.focus();
   ta.select();
-  autoGrow(); // 처음 열 때 기존 내용 전체가 보이도록 높이 맞춤
-  ta.addEventListener('input', autoGrow); // 타이핑할 때마다 늘어남
+  autoGrow();
+  ta.addEventListener('input', autoGrow);
+
+  // 선택한 글자에 서식(마크다운) 적용 — 노드맵은 마크다운을 렌더하므로 저장 후 실제 굵게/목록 등으로 보임
+  const applyFmt = (fmt) => {
+    const s = ta.selectionStart, e = ta.selectionEnd, val = ta.value, sel = val.slice(s, e);
+    let text, ns, ne;
+    if (fmt === 'list') {
+      const lineStart = val.lastIndexOf('\n', s - 1) + 1; // 선택(없으면 현재 줄) 시작 줄머리
+      const block = val.slice(lineStart, e);
+      const listed = block.split('\n').map(l => l.startsWith('- ') ? l : '- ' + l).join('\n');
+      text = val.slice(0, lineStart) + listed + val.slice(e);
+      ns = lineStart; ne = lineStart + listed.length;
+    } else {
+      const mk = { bold: ['**', '**'], italic: ['*', '*'], underline: ['<u>', '</u>'], strike: ['~~', '~~'] }[fmt];
+      text = val.slice(0, s) + mk[0] + sel + mk[1] + val.slice(e);
+      ns = s + mk[0].length; ne = e + mk[0].length; // 마커 안쪽으로 선택 유지 → 연속 서식·타이핑 가능
+    }
+    ta.value = text;
+    ta.setSelectionRange(ns, ne);
+    ta.focus();
+    autoGrow();
+  };
+  if (bar) bar.addEventListener('pointerdown', ev => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    ev.preventDefault(); // 마우스·터치 모두: 포커스·선택 유지(→ 버튼 탭이 textarea를 blur시켜 저장·종료되는 것 방지)
+    applyFmt(b.dataset.fmt);
+  });
+
   let done = false;
-  const cancel = () => { if (done) return; done = true; ta.replaceWith(titleEl); nodeEl.classList.remove('editing'); nodeEl.style.height = origHeight; };
+  const cancel = () => { if (done) return; done = true; wrap.replaceWith(titleEl); nodeEl.classList.remove('editing'); nodeEl.style.height = origHeight; };
   const save = () => {
     if (done) return; done = true;
     const val = ta.value.trim();
     if (!val) { cancel(); return; }
-    setValue(val); // commit() → render() 전체 재렌더로 이어짐
+    setValue(val); // commit() → render() 전체 재렌더
   };
   ta.addEventListener('blur', save);
   ta.addEventListener('keydown', e => {
     if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); }
+    // 메모 노드는 Enter=줄바꿈(스티커메모식), 저장은 바깥 클릭/Esc. 단계·허브 이름은 Enter=저장.
+    else if (e.key === 'Enter' && !e.shiftKey && !isMemo) { e.preventDefault(); ta.blur(); }
   });
 }
 

@@ -1128,6 +1128,22 @@ a:hover { color: var(--accent-2); }
 }
 /* 색상 지정된 노드(밝은 파스텔 배경)는 편집창 글자도 어둡게 — 흰 글씨가 밝은 배경에 묻히는 문제 방지 */
 .node.colored .node-edit-area { color: #1e293b; }
+.node-edit-area::placeholder { color: var(--text-dim); }
+.node.colored .node-edit-area::placeholder { color: #64748b; }
+
+/* 스티커메모식 편집기: 텍스트영역 + 하단 서식 툴바 */
+.node-editor { width: 100%; display: flex; flex-direction: column; }
+.node-edit-toolbar { display: flex; gap: 2px; margin-top: 4px; }
+.node-edit-toolbar button {
+  flex: 1; min-width: 0; height: 22px; padding: 0; line-height: 1;
+  font-size: 11px; cursor: pointer;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border-2); border-radius: 4px;
+}
+.node-edit-toolbar button:hover { border-color: var(--accent); }
+.node.colored .node-edit-toolbar button {
+  color: #1e293b; background: rgba(255, 255, 255, 0.55); border-color: rgba(0, 0, 0, 0.2);
+}
 
 /* 8방향 커넥터 — 히트 영역을 넉넉히 키워서(::before) 마우스로 잡기 쉽게 함 */
 .node-connector {
