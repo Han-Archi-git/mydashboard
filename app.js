@@ -1265,15 +1265,22 @@ function renderProjectMap(pid) {
     allPos[ph.id] = pp;
     // 허브↔단계는 자동으로 선을 긋지 않음 — 필요하면 허브 커넥터로 직접 연결(다른 노드와 완전히 동일하게 취급).
     ph.tasks.forEach(t => {
+      if (nodemapHideDone && t.done) return; // 완료 숨기기 필터 — allPos에도 안 넣어 연결선까지 자동 생략
       const tp = taskPos[t.id];
       allPos[t.id] = tp;
       // 단계→할일도 자동으로 선을 긋지 않음 — 배치(위치)로만 소속을 나타내고,
       // 실제로 보이는 선은 전부 사용자가 만든 자유연결(links)뿐이라 클릭/Shift로 항상 지울 수 있음.
       const colorStyle = t.color ? `background:${t.color};` : '';
       const sizeStyle = (t.w ? `width:${t.w}px;` : '') + (t.h ? `height:${t.h}px;` : '');
+      const subs = Array.isArray(t.subItems) ? t.subItems.length : 0;
+      const subsDone = subs ? t.subItems.filter(s => s.done).length : 0;
+      const subBadge = subs ? `<span class="node-subcount ${subsDone === subs ? 'full' : ''}">${subsDone}/${subs}</span>` : '';
       taskNodesHtml.push(`
         <div class="node ${t.done ? 'done' : ''} ${t.color ? 'colored' : ''}" data-task-id="${escapeHtml(t.id)}" data-search="${escapeHtml((t.title + ' ' + (t.memo || '')).toLowerCase())}" style="left:${cx + tp.x}px;top:${cy + tp.y}px;${colorStyle}${sizeStyle}">
-          <div class="node-title" data-task-id="${escapeHtml(t.id)}">${nodemapRenderText(t.title)}</div>
+          <button type="button" class="node-check ${t.done ? 'checked' : ''}" data-check-id="${escapeHtml(t.id)}" title="완료 토글" aria-label="완료 토글"></button>
+          <div class="node-title" data-task-id="${escapeHtml(t.id)}">${nodemapRenderText(t.title)}${subBadge}</div>
+          ${t.memo ? `<div class="node-memo">${escapeHtml(t.memo)}</div>` : ''}
+          ${t.due ? `<div class="node-due ${new Date(t.due).getTime() < Date.now() && !t.done ? 'late' : ''}">📅 ${escapeHtml(t.due.slice(0, 10))}</div>` : ''}
           ${connectorsHtml(t.id)}
         </div>`);
     });
@@ -1316,8 +1323,22 @@ function renderProjectMap(pid) {
       </div>
     </div>
     <div class="nodemap-toolbar">
-      <input id="node-search" class="add-input" placeholder="🔍 메모·제목 검색" autocomplete="off">
-      <div class="field-hint">빈 곳 더블클릭/우클릭 = 새 노드 추가 · 노드 클릭 = 편집 · 노드 우클릭 = 수정·색상·삭제 · 커넥터 드래그 = 연결 · 빈 곳 드래그 = 다중선택 · Del = 선택삭제 · Ctrl+C/V = 복사·붙여넣기 · Ctrl+Z = 실행취소 · Shift+드래그 = 화면 이동 · Shift+휠 = 확대·축소</div>
+      <div class="nodemap-toolbar-row">
+        <input id="node-search" class="add-input" placeholder="🔍 메모·제목 검색" autocomplete="off">
+        <div class="nodemap-zoom-btns">
+          <button type="button" class="zoom-btn" data-zoom="out" title="축소" aria-label="축소">−</button>
+          <button type="button" class="zoom-btn zoom-level" data-zoom="reset" title="100%로 초기화">100%</button>
+          <button type="button" class="zoom-btn" data-zoom="in" title="확대" aria-label="확대">＋</button>
+          <button type="button" class="zoom-btn zoom-fit" data-zoom="fit" title="전체 노드가 보이게 맞춤">전체보기</button>
+        </div>
+        <div class="nodemap-select-btns">
+          <button type="button" class="zoom-btn nm-select-toggle" data-select-toggle title="탭으로 여러 노드 선택">선택</button>
+          <button type="button" class="zoom-btn danger nm-select-del" data-select-del hidden title="선택한 노드 삭제">삭제</button>
+          <button type="button" class="zoom-btn nm-hide-done" data-hide-done title="완료된 노드 숨기기/보이기">완료숨기기</button>
+          <button type="button" class="zoom-btn nm-auto-arrange" data-auto-arrange title="노드 위치를 방사형 기본배치로 초기화">자동배치</button>
+        </div>
+      </div>
+      <div class="field-hint">노드 탭 = 편집 · ○ = 완료체크 · 노드 우클릭/길게눌러 = 제목·메모·마감·색상·삭제 · 빈 곳 더블클릭/우클릭/길게눌러 = 새 노드 · 커넥터 드래그 = 연결 · [선택] = 탭으로 다중선택 후 삭제 · 두 손가락 = 핀치 확대 · Shift+드래그 = 이동 · Shift+휠 = 확대</div>
     </div>
     <div class="nodemap-scroll">
       <div id="node-canvas" class="nodemap-canvas" data-project-id="${escapeHtml(p.id)}" style="width:${canvasSize}px;height:${canvasSize}px">
@@ -1529,8 +1550,11 @@ function nodemapShowContextMenu(pid, x, y, nodeEl) {
   menu.className = 'nodemap-ctxmenu';
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
+  const isTask = !isPhase && !isHub;
   menu.innerHTML = `
-    <button type="button" data-act="edit">수정</button>
+    <button type="button" data-act="edit">제목수정</button>
+    ${isTask ? '<button type="button" data-act="memo">메모·마감일</button>' : ''}
+    ${isTask ? `<button type="button" data-act="toggle">${nodemapFind(nodeEl.dataset.taskId)?.done ? '완료해제' : '완료'}</button>` : ''}
     <button type="button" data-act="color">색상</button>
     ${isHub ? '' : '<button type="button" data-act="delete" class="danger">삭제</button>'}
   `;
@@ -1546,6 +1570,10 @@ function nodemapShowContextMenu(pid, x, y, nodeEl) {
           val => isHub ? renameProject(pid, val) : isPhase ? renamePhase(pid, nodeEl.dataset.phaseId, val) : updateTask(nodeEl.dataset.taskId, { title: val })
         );
       }
+    } else if (act === 'memo') {
+      showEditTaskModal(nodeEl.dataset.taskId); // 제목·메모·마감일 한 번에 입력(리스트뷰 편집 모달 재사용)
+    } else if (act === 'toggle') {
+      toggleTask(nodeEl.dataset.taskId);
     } else if (act === 'color') {
       if (isHub) nodemapShowColorPicker('project:' + pid, x, y);
       else nodemapShowColorPicker(nodeEl.dataset.taskId || ('phase:' + nodeEl.dataset.phaseId), x, y);
@@ -1612,7 +1640,41 @@ let nodemapSelected = new Set(); // 마퀴 다중선택된 task/phase id
 let nodemapMarquee = null;       // { startX, startY, box }
 let nodemapGroupDrag = null;     // { items:[{kind,id,el,origLeft,origTop}], startX, startY, moved }
 let nodemapResizeTarget = null;  // 리사이즈 핸들로 드래그 중인 노드 — mouseup에서 한 번만 저장
+let nodemapLongPressTimer = null; // 터치 길게누르기 → 컨텍스트 메뉴
+let nodemapLongPressed = false;   // 길게누르기로 메뉴가 떴으면 뒤이은 탭(click)을 무시
+const nodemapPointers = new Map(); // 활성 터치 포인터 pointerId -> {x,y} (핀치줌 계산용)
+let nodemapPinch = null;          // { startDist, startZoom, scrollEl, canvas }
+let nodemapSelectMode = false;    // 터치 다중선택 모드 — 탭으로 노드 선택/해제
+let nodemapHideDone = false;       // 완료된 할일 노드 숨기기(정리용)
+let nodemapLastTap = null;         // 터치 더블탭 감지 { t, x, y }
 const NODEMAP_CLICK_THRESHOLD = 4; // px — 이보다 적게 움직이면 드래그가 아니라 클릭으로 취급
+const NODEMAP_LONGPRESS_MS = 480;
+
+function nodemapClearLongPress() {
+  if (nodemapLongPressTimer) { clearTimeout(nodemapLongPressTimer); nodemapLongPressTimer = null; }
+}
+
+function nodemapClearSelection() {
+  const canvas = document.querySelector('#node-canvas');
+  if (canvas) nodemapSelected.forEach(id => {
+    const el = canvas.querySelector(`.node[data-task-id="${CSS.escape(id)}"], .node.phase-node[data-phase-id="${CSS.escape(id)}"]`);
+    if (el) el.classList.remove('selected');
+  });
+  nodemapSelected.clear();
+}
+
+// 선택 모드 버튼 상태와 삭제 버튼(개수) 동기화 + 캔버스에 모드 클래스 부여
+function nodemapSyncSelectUI() {
+  const toggle = document.querySelector('.nm-select-toggle');
+  const del = document.querySelector('.nm-select-del');
+  const scroll = document.querySelector('.nodemap-scroll');
+  if (toggle) toggle.classList.toggle('active', nodemapSelectMode);
+  if (scroll) scroll.classList.toggle('select-mode', nodemapSelectMode);
+  if (del) {
+    del.hidden = !nodemapSelectMode;
+    del.textContent = nodemapSelected.size ? `삭제 (${nodemapSelected.size})` : '삭제';
+  }
+}
 
 function nodemapCenter(canvas) {
   return { cx: parseFloat(canvas.style.width) / 2, cy: parseFloat(canvas.style.height) / 2 };
@@ -1646,10 +1708,75 @@ let nodemapScrollPos = null; // { left, top } — commit()의 전체 재렌더�
 let nodemapZoom = 1;         // Shift+휠로 조절되는 배율, 재렌더 후에도 유지
 const NODEMAP_ZOOM_MIN = 0.3, NODEMAP_ZOOM_MAX = 2.5;
 
+// 화면상의 한 지점(screenX,screenY: 뷰포트 픽셀)을 고정한 채 배율을 바꾼다. 핀치줌·버튼줌 공용.
+// transform-origin이 0 0이라 논리좌표 L은 화면상 scroll+offset = L*zoom. 그 지점을 유지하도록 스크롤 재계산.
+function nodemapZoomAt(nz, scrollEl, canvas, screenX, screenY) {
+  nz = Math.min(NODEMAP_ZOOM_MAX, Math.max(NODEMAP_ZOOM_MIN, nz));
+  const rect = scrollEl.getBoundingClientRect();
+  const offX = screenX - rect.left, offY = screenY - rect.top;
+  const logicalX = (scrollEl.scrollLeft + offX) / nodemapZoom;
+  const logicalY = (scrollEl.scrollTop + offY) / nodemapZoom;
+  nodemapZoom = nz;
+  canvas.style.transform = `scale(${nz})`;
+  scrollEl.scrollLeft = logicalX * nz - offX;
+  scrollEl.scrollTop = logicalY * nz - offY;
+  nodemapScrollPos = { left: scrollEl.scrollLeft, top: scrollEl.scrollTop };
+  nodemapUpdateZoomLabel();
+}
+
+// 뷰포트 중심 고정 줌(버튼·초기화용) — nodemapZoomAt에 화면 중심 좌표를 넘긴다.
+function nodemapApplyZoom(nz, scrollEl, canvas) {
+  const rect = scrollEl.getBoundingClientRect();
+  nodemapZoomAt(nz, scrollEl, canvas, rect.left + scrollEl.clientWidth / 2, rect.top + scrollEl.clientHeight / 2);
+}
+
+function nodemapUpdateZoomLabel() {
+  const el = document.querySelector('.zoom-btn.zoom-level');
+  if (el) el.textContent = Math.round(nodemapZoom * 100) + '%';
+}
+
+// 모든 노드의 레이아웃 경계를 구해, 화면에 꽉 차게 배율·스크롤을 맞춘다.
+// .node는 transform:translate(-50%,-50%)라 offsetLeft/Top이 '중심'이므로 폭/높이의 절반씩 확장해 경계로 삼는다.
+function nodemapFit(scrollEl, canvas) {
+  const nodes = [...canvas.querySelectorAll('.node')];
+  if (!nodes.length) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  nodes.forEach(el => {
+    const w = el.offsetWidth, h = el.offsetHeight;
+    const l = el.offsetLeft - w / 2, t = el.offsetTop - h / 2;
+    minX = Math.min(minX, l); minY = Math.min(minY, t);
+    maxX = Math.max(maxX, l + w); maxY = Math.max(maxY, t + h);
+  });
+  const pad = 60;
+  const contentW = Math.max(1, maxX - minX), contentH = Math.max(1, maxY - minY);
+  const z = Math.min((scrollEl.clientWidth - pad) / contentW, (scrollEl.clientHeight - pad) / contentH);
+  nodemapZoom = Math.min(NODEMAP_ZOOM_MAX, Math.max(NODEMAP_ZOOM_MIN, z));
+  canvas.style.transform = `scale(${nodemapZoom})`;
+  const cX = (minX + maxX) / 2, cY = (minY + maxY) / 2;
+  scrollEl.scrollLeft = cX * nodemapZoom - scrollEl.clientWidth / 2;
+  scrollEl.scrollTop = cY * nodemapZoom - scrollEl.clientHeight / 2;
+  nodemapScrollPos = { left: scrollEl.scrollLeft, top: scrollEl.scrollTop };
+  nodemapUpdateZoomLabel();
+}
+
+// 노드 좌표(x/y)를 모두 비워 nodemapLayout이 방사형 기본배치를 다시 계산하게 함. 크기·색·연결은 유지.
+function nodemapAutoArrange(pid) {
+  const f = findProject(pid);
+  if (!f) return;
+  f.project.phases.forEach(ph => {
+    ph.x = null; ph.y = null;
+    ph.tasks.forEach(t => { t.x = null; t.y = null; });
+  });
+  commit();
+}
+
 function mountNodeCanvas(pid) {
   const canvas = $('#node-canvas');
   if (!canvas) return;
   canvas.style.transform = `scale(${nodemapZoom})`;
+  nodemapUpdateZoomLabel();
+  const hideBtn = document.querySelector('.nm-hide-done');
+  if (hideBtn) hideBtn.classList.toggle('active', nodemapHideDone);
 
   const scrollEl = canvas.closest('.nodemap-scroll');
   if (scrollEl) {
@@ -1674,10 +1801,105 @@ function mountNodeCanvas(pid) {
 
   if (scrollEl) scrollEl.classList.toggle('pan-ready', nodemapPanKey);
 
-  canvas.addEventListener('mousedown', e => {
+  // 줌/맞춤 버튼 — 마우스 없이도(모바일) 확대·축소·전체보기 가능
+  const zoomBar = document.querySelector('.nodemap-zoom-btns');
+  if (zoomBar && scrollEl) {
+    zoomBar.addEventListener('click', e => {
+      const btn = e.target.closest('.zoom-btn');
+      if (!btn) return;
+      const act = btn.dataset.zoom;
+      if (act === 'in') nodemapApplyZoom(nodemapZoom + 0.2, scrollEl, canvas);
+      else if (act === 'out') nodemapApplyZoom(nodemapZoom - 0.2, scrollEl, canvas);
+      else if (act === 'reset') nodemapApplyZoom(1, scrollEl, canvas);
+      else if (act === 'fit') nodemapFit(scrollEl, canvas);
+    });
+  }
+
+  // 다중선택 모드(터치 친화) — 탭으로 노드를 골라 한 번에 삭제
+  const selToggle = document.querySelector('.nm-select-toggle');
+  const selDel = document.querySelector('.nm-select-del');
+  nodemapSyncSelectUI();
+  if (selToggle) selToggle.addEventListener('click', () => {
+    nodemapSelectMode = !nodemapSelectMode;
+    if (!nodemapSelectMode) nodemapClearSelection();
+    nodemapSyncSelectUI();
+  });
+  if (selDel) selDel.addEventListener('click', () => {
+    if (nodemapSelected.size === 0) return;
+    if (confirm(`선택한 ${nodemapSelected.size}개 노드를 삭제할까요?`)) {
+      nodemapSelectMode = false; // 삭제 후 렌더 시 선택모드 UI가 꺼진 상태로 그려지도록 먼저 해제
+      nodemapDeleteSelected();    // 내부에서 commit()→render()→mountNodeCanvas→nodemapSyncSelectUI 재동기화
+    }
+  });
+  const hideDoneBtn = document.querySelector('.nm-hide-done');
+  if (hideDoneBtn) hideDoneBtn.addEventListener('click', () => {
+    nodemapHideDone = !nodemapHideDone;
+    render(); // 필터 반영 재렌더 (mount에서 버튼 active 재동기화)
+  });
+  const autoBtn = document.querySelector('.nm-auto-arrange');
+  if (autoBtn) autoBtn.addEventListener('click', () => {
+    if (confirm('드래그로 옮긴 위치를 버리고 기본 방사형 배치로 재정렬할까요?')) nodemapAutoArrange(pid);
+  });
+
+  canvas.addEventListener('pointerdown', e => {
+    if (e.button && e.button !== 0) return; // 우클릭/보조버튼은 드래그 시작 안 함(contextmenu가 처리)
+    if (e.target.closest('.node-check')) return; // 완료 체크 버튼은 클릭으로만 처리(드래그 금지)
     const connector = e.target.closest('.node-connector');
     const nodeEl = e.target.closest('.node');
     const linkEl = e.target.closest('.node-link');
+    const isTouch = e.pointerType !== 'mouse';
+    nodemapLongPressed = false;
+    nodemapClearLongPress();
+
+    if (isTouch) {
+      // 활성 손가락 추적 → 두 번째 손가락이 닿으면 핀치줌 시작(진행 중 상호작용은 취소)
+      nodemapPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (nodemapPointers.size >= 2 && scrollEl) {
+        nodemapClearLongPress();
+        if (nodemapDrag) { nodemapDrag.el.classList.remove('dragging'); nodemapDrag = null; }
+        if (nodemapGroupDrag) { nodemapGroupDrag.items.forEach(it => it.el.classList.remove('dragging')); nodemapGroupDrag = null; }
+        if (nodemapTempLine) { nodemapTempLine.remove(); nodemapTempLine = null; }
+        nodemapWireFrom = null;
+        const pts = [...nodemapPointers.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        nodemapPinch = { startDist: dist, startZoom: nodemapZoom, scrollEl, canvas };
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
+        return;
+      }
+    }
+
+    // 터치: 길게 누르면 컨텍스트 메뉴(노드=수정·색상·삭제 / 빈곳=새 노드). 이동하면 취소.
+    if (isTouch) {
+      const startCX = e.clientX, startCY = e.clientY;
+      nodemapLongPressTimer = setTimeout(() => {
+        nodemapLongPressTimer = null;
+        nodemapLongPressed = true;
+        // 진행 중이던 드래그/그룹드래그를 취소(이동 없이 눌러만 있던 상태)
+        if (nodemapDrag) { nodemapDrag.el.classList.remove('dragging'); nodemapDrag = null; }
+        if (nodemapGroupDrag) { nodemapGroupDrag.items.forEach(it => it.el.classList.remove('dragging')); nodemapGroupDrag = null; }
+        if (nodeEl && !nodeEl.classList.contains('hub-node')) {
+          nodemapShowContextMenu(pid, startCX, startCY, nodeEl);
+        } else if (nodeEl && nodeEl.classList.contains('hub-node')) {
+          nodemapShowContextMenu(pid, startCX, startCY, nodeEl);
+        } else if (!linkEl) {
+          const cr = canvas.getBoundingClientRect();
+          const { cx, cy } = nodemapCenter(canvas);
+          const relX = (startCX - cr.left) / nodemapZoom - cx, relY = (startCY - cr.top) / nodemapZoom - cy;
+          nodemapShowEmptyContextMenu(pid, startCX, startCY, relX, relY);
+        }
+        // 손을 뗄 때 합성되는 click이 방금 뜬 메뉴 버튼을 잘못 누르지 않도록 다음 click 한 번을 삼킨다.
+        const swallow = ev => { ev.stopPropagation(); ev.preventDefault(); cleanup(); };
+        const cleanup = () => { document.removeEventListener('click', swallow, true); clearTimeout(swTimer); };
+        const swTimer = setTimeout(cleanup, 700);
+        document.addEventListener('click', swallow, true);
+      }, NODEMAP_LONGPRESS_MS);
+      // 터치로 빈 캔버스를 누르면 네이티브 스크롤(=화면 이동)에 맡긴다.
+      // 스크롤이 시작되면 pointercancel이 와서 위 타이머가 해제됨.
+      if (!connector && !nodeEl && !linkEl) return;
+      // 노드/커넥터 상호작용은 포인터 캡처로 손가락이 벗어나도 이벤트를 계속 받는다.
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    }
+
     if (nodemapPanKey && scrollEl && !connector && !nodeEl && !linkEl) {
       // 빈 캔버스에서만 패닝 시작 — 노드/커넥터/연결선 위에서는 그쪽 상호작용(연결해제 등)이 우선
       e.preventDefault();
@@ -1765,7 +1987,21 @@ function mountNodeCanvas(pid) {
   });
 
   canvas.addEventListener('click', e => {
+    if (nodemapLongPressed) { nodemapLongPressed = false; return; } // 길게눌러 메뉴가 떴으면 이어지는 탭 무시
     if (e.target.closest('.node-connector')) return;
+    // 선택 모드: 노드 탭 = 선택/해제 (편집 대신)
+    if (nodemapSelectMode) {
+      const nodeEl = e.target.closest('.node:not(.hub-node)');
+      if (nodeEl) {
+        const id = nodeEl.dataset.taskId || nodeEl.dataset.phaseId;
+        if (nodemapSelected.has(id)) { nodemapSelected.delete(id); nodeEl.classList.remove('selected'); }
+        else { nodemapSelected.add(id); nodeEl.classList.add('selected'); }
+        nodemapSyncSelectUI();
+      }
+      return;
+    }
+    const checkBtn = e.target.closest('.node-check');
+    if (checkBtn) { toggleTask(checkBtn.dataset.checkId); return; } // 노드에서 바로 완료 토글
     if (e.target.tagName === 'SELECT') return;
     const titleEl = e.target.closest('.node-title');
     if (titleEl) {
@@ -1846,7 +2082,21 @@ function mountNodeCanvas(pid) {
     document.querySelectorAll('.nodemap-scroll').forEach(el => el.classList.remove('pan-ready', 'panning'));
   });
 
-  document.addEventListener('mousemove', e => {
+  document.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse' && nodemapPointers.has(e.pointerId)) {
+      nodemapPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    // 두 손가락 핀치 → 배율 조정(중간점 고정)
+    if (nodemapPinch && nodemapPointers.size >= 2) {
+      nodemapClearLongPress();
+      const pts = [...nodemapPointers.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      const midX = (pts[0].x + pts[1].x) / 2, midY = (pts[0].y + pts[1].y) / 2;
+      nodemapZoomAt(nodemapPinch.startZoom * (dist / nodemapPinch.startDist), nodemapPinch.scrollEl, nodemapPinch.canvas, midX, midY);
+      return;
+    }
+    // 손가락이 움직이기 시작하면 길게누르기(컨텍스트 메뉴)는 취소하고 드래그로 간주
+    if (nodemapLongPressTimer && (nodemapDrag || nodemapGroupDrag || nodemapWireFrom)) nodemapClearLongPress();
     if (nodemapPan) {
       nodemapPan.scrollEl.scrollLeft = nodemapPan.startLeft - (e.clientX - nodemapPan.startX);
       nodemapPan.scrollEl.scrollTop = nodemapPan.startTop - (e.clientY - nodemapPan.startY);
@@ -1896,7 +2146,10 @@ function mountNodeCanvas(pid) {
     }
   });
 
-  document.addEventListener('mouseup', e => {
+  document.addEventListener('pointerup', e => {
+    nodemapClearLongPress();
+    nodemapPointers.delete(e.pointerId);
+    if (nodemapPinch && nodemapPointers.size < 2) nodemapPinch = null;
     if (nodemapResizeTarget) {
       nodemapSaveSize(nodemapResizeTarget);
       nodemapResizeTarget = null;
@@ -1947,7 +2200,9 @@ function mountNodeCanvas(pid) {
       }
       nodemapDrag = null;
     } else if (nodemapWireFrom) {
-      const targetEl = e.target.closest('.node');
+      // 포인터 캡처(터치) 상태면 e.target이 커넥터로 고정되므로, 실제 손을 뗀 지점의 노드를 좌표로 찾는다
+      const dropEl = document.elementFromPoint(e.clientX, e.clientY);
+      const targetEl = dropEl && dropEl.closest('.node');
       if (nodemapTempLine) nodemapTempLine.remove();
       const targetId = targetEl && (targetEl.dataset.taskId || targetEl.dataset.phaseId || targetEl.dataset.hubId);
       if (targetId && targetId !== nodemapWireFrom) {
@@ -1961,7 +2216,43 @@ function mountNodeCanvas(pid) {
         }
       }
       nodemapWireFrom = null; nodemapWireShiftMode = false; nodemapTempLine = null;
+      return;
     }
+    // 여기까지 왔으면 드래그·연결·패닝 등 어떤 상호작용에도 소비되지 않은 '탭'.
+    // 터치로 빈 캔버스를 더블탭하면 새 노드 메뉴(마우스 더블클릭과 동일).
+    if (e.pointerType !== 'mouse' && !nodemapLongPressed && !nodemapPinch) {
+      const canvas = document.querySelector('#node-canvas');
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const onEmpty = canvas && under && canvas.contains(under) && !under.closest('.node') && !under.closest('.node-link');
+      if (onEmpty) {
+        const t = Date.now();
+        if (nodemapLastTap && t - nodemapLastTap.t < 320 && Math.hypot(e.clientX - nodemapLastTap.x, e.clientY - nodemapLastTap.y) < 32) {
+          nodemapLastTap = null;
+          const r = currentRoute();
+          if (r.name === 'project' && r.view === 'map') {
+            const cr = canvas.getBoundingClientRect();
+            const { cx, cy } = nodemapCenter(canvas);
+            const relX = (e.clientX - cr.left) / nodemapZoom - cx, relY = (e.clientY - cr.top) / nodemapZoom - cy;
+            nodemapShowEmptyContextMenu(r.id, e.clientX, e.clientY, relX, relY);
+          }
+        } else {
+          nodemapLastTap = { t, x: e.clientX, y: e.clientY };
+        }
+      }
+    }
+  });
+
+  // 터치 스크롤(패닝)로 브라우저가 제스처를 가져가면 pointercancel이 온다 → 진행 중이던 상호작용 정리
+  document.addEventListener('pointercancel', e => {
+    nodemapClearLongPress();
+    nodemapPointers.delete(e.pointerId);
+    if (nodemapPinch && nodemapPointers.size < 2) nodemapPinch = null;
+    if (nodemapTempLine) { nodemapTempLine.remove(); nodemapTempLine = null; }
+    nodemapWireFrom = null; nodemapWireShiftMode = false;
+    if (nodemapDrag) { nodemapDrag.el.classList.remove('dragging'); nodemapDrag = null; }
+    if (nodemapGroupDrag) { nodemapGroupDrag.items.forEach(it => it.el.classList.remove('dragging')); nodemapGroupDrag = null; }
+    if (nodemapMarquee) { nodemapMarquee.box.remove(); nodemapMarquee = null; }
+    nodemapPan = null;
   });
 }
 
