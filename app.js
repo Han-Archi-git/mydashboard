@@ -1335,7 +1335,7 @@ function renderProjectMap(pid) {
           <button type="button" class="zoom-btn nm-select-toggle" data-select-toggle title="탭으로 여러 노드 선택">선택</button>
           <button type="button" class="zoom-btn danger nm-select-del" data-select-del hidden title="선택한 노드 삭제">삭제</button>
           <button type="button" class="zoom-btn nm-hide-done" data-hide-done title="완료된 노드 숨기기/보이기">완료숨기기</button>
-          <button type="button" class="zoom-btn nm-auto-arrange" data-auto-arrange title="노드 위치를 방사형 기본배치로 초기화">자동배치</button>
+          <button type="button" class="zoom-btn nm-auto-arrange" data-auto-arrange title="노드를 겹치지 않는 격자로 정렬">자동배치</button>
         </div>
       </div>
       <div class="field-hint">노드 탭 = 편집 · ○ = 완료체크 · 노드 우클릭/길게눌러 = 제목·메모·마감·색상·삭제 · 빈 곳 더블클릭/우클릭/길게눌러 = 새 노드 · 커넥터 드래그 = 연결 · [선택] = 탭으로 다중선택 후 삭제 · 두 손가락 = 핀치 확대 · Shift+드래그 = 이동 · Shift+휠 = 확대</div>
@@ -1811,13 +1811,28 @@ function nodemapFit(scrollEl, canvas) {
   nodemapUpdateZoomLabel();
 }
 
-// 노드 좌표(x/y)를 모두 비워 nodemapLayout이 방사형 기본배치를 다시 계산하게 함. 크기·색·연결은 유지.
+// 겹치지 않는 격자로 정돈: 허브는 중심(0,0) 고정, 단계별 블록을 세로로 쌓고
+// 각 단계의 할일을 그 아래 격자로 펼친다(방사형 겹침 방지). 크기·색·연결은 유지.
 function nodemapAutoArrange(pid) {
   const f = findProject(pid);
   if (!f) return;
+  const CELL_W = 250, CELL_H = 150; // 노드 폭/높이 + 여백 (기본 노드보다 넉넉히 → 겹침 방지)
+  const COLS = 4;                   // 한 줄에 놓는 할일 수
+  const GAP_Y = 60;                 // 단계 블록 사이 세로 간격
+  let y = 170; // 허브(중심) 아래에서 시작
   f.project.phases.forEach(ph => {
-    ph.x = null; ph.y = null;
-    ph.tasks.forEach(t => { t.x = null; t.y = null; });
+    const T = ph.tasks.length;
+    const cols = Math.max(1, Math.min(COLS, T));
+    const xStart = -((cols - 1) / 2) * CELL_W; // 격자를 가로 중앙 정렬
+    ph.x = 0; ph.y = y;            // 단계 노드는 그 블록의 머리(중앙 위)
+    const firstRowY = y + CELL_H;  // 할일 첫 줄은 단계 아래
+    ph.tasks.forEach((t, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      t.x = xStart + col * CELL_W;
+      t.y = firstRowY + row * CELL_H;
+    });
+    const rows = Math.ceil(T / cols);
+    y = firstRowY + rows * CELL_H + GAP_Y; // 다음 단계 블록으로
   });
   commit();
 }
@@ -1890,7 +1905,7 @@ function mountNodeCanvas(pid) {
   });
   const autoBtn = document.querySelector('.nm-auto-arrange');
   if (autoBtn) autoBtn.addEventListener('click', () => {
-    if (confirm('드래그로 옮긴 위치를 버리고 기본 방사형 배치로 재정렬할까요?')) nodemapAutoArrange(pid);
+    if (confirm('드래그로 옮긴 위치를 버리고 겹치지 않는 격자로 정렬할까요?')) nodemapAutoArrange(pid);
   });
 
   canvas.addEventListener('pointerdown', e => {
